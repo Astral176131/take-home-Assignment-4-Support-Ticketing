@@ -1,0 +1,182 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --- Enums ---
+
+enum Role {
+  agent
+  supervisor
+}
+
+enum TicketStatus {
+  new_ticket  // 'new' is a reserved word in some contexts, using new_ticket
+  open
+  pending
+  resolved
+  closed
+}
+
+enum Priority {
+  low
+  normal
+  high
+  urgent
+}
+
+enum Category {
+  bug
+  billing
+  how_to
+  other
+}
+
+enum AuthorType {
+  agent
+  customer
+}
+
+enum EventType {
+  status_change
+  reassignment
+  collaborator_added
+  collaborator_removed
+  archived
+  restored
+  reply_added
+  sla_ack
+}
+
+// --- Models ---
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  name          String
+  role          Role
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  assignedTickets      Ticket[]             @relation("AssignedTickets")
+  collaboratingTickets TicketCollaborator[]
+  ticketEvents         TicketEvent[]
+
+  @@map("users")
+}
+
+model Requester {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  tickets Ticket[]
+
+  @@map("requesters")
+}
+
+model PriorityConfig {
+  code                  Priority @id
+  targetResponseMinutes Int      @map("target_response_minutes")
+  sortOrder             Int      @map("sort_order")
+
+  // Relations
+  tickets Ticket[]
+
+  @@map("priorities")
+}
+
+model Ticket {
+  id              String       @id @default(uuid())
+  subject         String
+  description     String
+  requesterId     String       @map("requester_id")
+  priorityCode    Priority     @map("priority_code")
+  category        Category
+  status          TicketStatus @default(new_ticket)
+  assigneeId      String?      @map("assignee_id")
+  pendingSince    DateTime?    @map("pending_since")
+  pausedMinutes   Int          @default(0) @map("paused_minutes")
+  resolvedAt      DateTime?    @map("resolved_at")
+  closedAt        DateTime?    @map("closed_at")
+  archivedAt      DateTime?    @map("archived_at")
+  ackCycle        Int          @default(0) @map("ack_cycle")
+  ackedThroughCycle Int?       @map("acked_through_cycle")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  requester     Requester          @relation(fields: [requesterId], references: [id])
+  priority      PriorityConfig     @relation(fields: [priorityCode], references: [code])
+  assignee      User?              @relation("AssignedTickets", fields: [assigneeId], references: [id])
+  collaborators TicketCollaborator[]
+  replies       Reply[]
+  events        TicketEvent[]
+
+  // Indexes
+  @@index([status])
+  @@index([assigneeId])
+  @@index([archivedAt])
+  @@index([createdAt])
+
+  @@map("tickets")
+}
+
+model TicketCollaborator {
+  ticketId  String   @map("ticket_id")
+  agentId   String   @map("agent_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+  agent  User   @relation(fields: [agentId], references: [id])
+
+  // Composite PK
+  @@id([ticketId, agentId])
+  @@index([agentId])
+
+  @@map("ticket_collaborators")
+}
+
+model Reply {
+  id         String     @id @default(uuid())
+  ticketId   String     @map("ticket_id")
+  authorId   String     @map("author_id")
+  authorType AuthorType @map("author_type")
+  body       String
+  isInternal Boolean    @default(false) @map("is_internal")
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  // Relations
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+
+  // Indexes
+  @@index([ticketId])
+
+  @@map("replies")
+}
+
+model TicketEvent {
+  id        String    @id @default(uuid())
+  ticketId  String    @map("ticket_id")
+  eventType EventType @map("event_type")
+  actorId   String?   @map("actor_id")
+  oldValue  String?   @map("old_value")
+  newValue  String?   @map("new_value")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+  actor  User?  @relation(fields: [actorId], references: [id])
+
+  // Indexes
+  @@index([ticketId])
+
+  @@map("ticket_events")
+}
