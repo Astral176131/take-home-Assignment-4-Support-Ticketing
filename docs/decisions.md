@@ -35,3 +35,9 @@ below, not necessarily the last one; add a **Later reversed:** line to whichever
 - **Rejected:** Throw at module import time (`const JWT_SECRET = process.env.JWT_SECRET; if (!JWT_SECRET) throw ...`)
 - **Why:** Initially implemented the fail-fast approach (Decision 5 was originally "fail at startup"). **Later reversed:** The fail-fast approach crashed on import because the middleware module is loaded before `dotenv.config()` runs in `index.ts`. The import chain is `index.ts → app.ts → auth.routes.ts → middleware/auth.ts`, and by the time the middleware's top-level code runs, `process.env.JWT_SECRET` is still undefined. Switched to a lazy getter that checks on first use, by which point dotenv has loaded.
 - **Later reversed:** Yes — the original fail-fast was correct in principle but wrong in execution order. The lazy approach preserves the same safety (first request will fail immediately if the secret is missing) while respecting Node.js module loading order.
+
+## Decision 6 — Environment variable loading: side-effect import vs `dotenv.config()`
+
+- **Chose:** `import 'dotenv/config'` as the very first line in the entry point (`index.ts`).
+- **Rejected:** `import dotenv from 'dotenv'; dotenv.config();`
+- **Why:** In ES/TypeScript modules, `import` statements are hoisted and evaluated *before* any runtime code execution. By calling `dotenv.config()` imperatively, any dependencies imported further down the file (such as `app.js` → `lib/prisma.ts`) evaluate before the environment variables are loaded. This caused Prisma's Postgres connection pool to initialize with an undefined `DATABASE_URL`, resulting in an `ECONNREFUSED` error as it fell back to querying localhost. The side-effect import `import 'dotenv/config'` executes the `.env` loading *during* the import phase, fixing the initialization order.
