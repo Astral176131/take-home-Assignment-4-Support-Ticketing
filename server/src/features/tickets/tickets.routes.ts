@@ -272,6 +272,32 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
   res.json({ items: items.map(toListItem), total });
 });
 
+/**
+ * GET /api/tickets/mine — the tickets this person is actually on.
+ *
+ * Declared before `/:id` so Express doesn't read "mine" as a ticket id.
+ *
+ * For an agent this returns the same set as the list above, which already scopes them to
+ * their own work. The difference shows for a supervisor: `/` gives them the whole queue,
+ * while this gives only the tickets they hold personally — which, per decision 4, means
+ * escalations they have taken over.
+ */
+router.get('/mine', async (req: Request, res: Response): Promise<void> => {
+  const actor = req.user!;
+
+  const where: Prisma.TicketWhereInput = {
+    archivedAt: req.query.archived === 'true' ? undefined : null,
+    OR: [{ assigneeId: actor.userId }, { collaborators: { some: { agentId: actor.userId } } }],
+  };
+
+  const [items, total] = await Promise.all([
+    prisma.ticket.findMany({ where, include: listInclude, orderBy: { createdAt: 'desc' } }),
+    prisma.ticket.count({ where }),
+  ]);
+
+  res.json({ items: items.map(toListItem), total });
+});
+
 // --- Read one ----------------------------------------------------------------
 
 // Express 5 types params as string | string[]; naming the shape keeps `id` a string.

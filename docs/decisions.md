@@ -171,15 +171,42 @@ reconstructed afterwards. Each one had a real alternative.
   requester plus same description, against open tickets only*, so a genuine recurrence
   after closure still gets its own ticket.
 
-  **At the time of writing the code still warns rather than blocks.** What remains
-  undecided is enforcement: a database constraint makes it airtight even against two agents
-  filing simultaneously but leaves no room for an override, while an application check is
-  simpler and overridable but carries the same read-then-write race that decision 1 was
-  about. That choice is what is holding the change.
+  **The shipped behaviour is still the warning, deliberately.** Blocking is scheduled for
+  after Phase 6, once all ten goals are met — the brief is explicit that finishing fewer
+  goals properly beats leaving all ten half-done, and duplicate blocking is not one of the
+  ten. The remaining choice is enforcement: a database constraint would be airtight even
+  against two agents filing simultaneously but leaves no room for an override, while an
+  application check is simpler and overridable but carries the same read-then-write race
+  that decision 1 was about.
 
 ---
 
-## 10. Testing against a real database, in its own Supabase project
+## 10. Access is binary — no read-only tier for people who used to work a ticket
+
+- **Chose:** the moment an agent stops being the assignee or a collaborator, they get a 403
+  on that ticket. Reassignment and collaborator removal both revoke access completely, with
+  no residual state. The previous assignee is not auto-added as a collaborator; a supervisor
+  who wants them to stay involved must add them explicitly.
+- **Rejected:** a third permission tier giving former assignees read-only visibility, and a
+  "tickets I've handled" view built on it.
+- **Why:** the brief scopes access by *current* standing in both places it addresses the
+  question — "agents can only act on tickets where they are the primary assignee or a
+  collaborator", and the same wording again for the my-tickets list. Nothing asks for
+  former workers to retain visibility.
+
+  The need behind the idea — seeing what happened on a ticket you used to own — is already
+  met by the immutable timeline, which permanently records every status change,
+  reassignment and reply. That is an audit concern, and audit is a supervisor's view, not a
+  reason to loosen live ticket access.
+
+  The cost mattered too. Every other deviation in this document *narrows* the brief's
+  matrix, which is easy to defend. This one would have widened it, and it would have turned
+  a single yes/no question asked by every route into two — splitting `checkTicketAccess`,
+  touching every endpoint, and rewriting the 52 matrix tests that assert a boolean per row.
+
+---
+
+## 11. Testing against a real database, in its own Supabase project
 
 - **Chose:** Vitest and Supertest against a second, separate Postgres database. Each test
   file creates the users, tickets and customers it needs, and deletes them afterwards.
