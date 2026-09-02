@@ -6,6 +6,7 @@ import { ticketsRouter } from './features/tickets/tickets.routes.js';
 import { repliesRouter } from './features/tickets/replies.routes.js';
 import { statusRouter } from './features/tickets/status.routes.js';
 import { collaboratorsRouter } from './features/tickets/collaborators.routes.js';
+import { reassignRouter } from './features/tickets/reassign.routes.js';
 import { agentsRouter } from './features/agents/agents.routes.js';
 
 const app = express();
@@ -24,6 +25,7 @@ app.use('/api/tickets', ticketsRouter);
 app.use('/api/tickets', repliesRouter);
 app.use('/api/tickets', statusRouter);
 app.use('/api/tickets', collaboratorsRouter);
+app.use('/api/tickets', reassignRouter);
 app.use('/api/agents', agentsRouter);
 
 // Health check
