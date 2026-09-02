@@ -1,8 +1,9 @@
 import { Router, Request, Response } from 'express';
-import { Category, Prisma, Priority, TicketStatus } from '@prisma/client';
+import { Category, Prisma, Priority } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate, requireTicketAccess } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
+import { STATUS_TO_API, loadTicketDetail, toTicketDetail } from './detail.js';
 
 const router = Router();
 
@@ -11,18 +12,6 @@ router.use(authenticate);
 
 const PRIORITIES: Priority[] = ['low', 'normal', 'high', 'urgent'];
 const CATEGORIES: Category[] = ['bug', 'billing', 'how_to', 'other'];
-
-/**
- * The schema stores the first state as `new_ticket` because `new` is awkward as an enum
- * member, but the brief's state machine calls it `new` — so the API speaks `new`.
- */
-const STATUS_TO_API: Record<TicketStatus, string> = {
-  new_ticket: 'new',
-  open: 'open',
-  pending: 'pending',
-  resolved: 'resolved',
-  closed: 'closed',
-};
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -72,67 +61,6 @@ function toListItem(ticket: Prisma.TicketGetPayload<{
     created_at: ticket.createdAt,
     updated_at: ticket.updatedAt,
   };
-}
-
-const detailInclude = {
-  requester: true,
-  assignee: { select: { id: true, name: true, email: true, role: true } },
-  collaborators: {
-    include: { agent: { select: { id: true, name: true, email: true } } },
-    orderBy: { createdAt: 'asc' },
-  },
-  replies: { orderBy: { createdAt: 'asc' } },
-  events: {
-    orderBy: { createdAt: 'asc' },
-    include: { actor: { select: { id: true, name: true } } },
-  },
-} satisfies Prisma.TicketInclude;
-
-function toDetail(ticket: Prisma.TicketGetPayload<{ include: typeof detailInclude }>) {
-  return {
-    id: ticket.id,
-    subject: ticket.subject,
-    description: ticket.description,
-    status: STATUS_TO_API[ticket.status],
-    priority_code: ticket.priorityCode,
-    category: ticket.category,
-    requester: ticket.requester,
-    assignee: ticket.assignee,
-    collaborators: ticket.collaborators.map((c) => c.agent),
-    // Empty until replies land in 2.2 and status changes in 2.3, but shaped now so
-    // those checkpoints add data rather than reshaping this response.
-    replies: ticket.replies.map((r) => ({
-      id: r.id,
-      body: r.body,
-      author_id: r.authorId,
-      author_type: r.authorType,
-      is_internal: r.isInternal,
-      created_at: r.createdAt,
-    })),
-    events: ticket.events.map((e) => ({
-      id: e.id,
-      event_type: e.eventType,
-      actor: e.actor,
-      old_value: e.oldValue,
-      new_value: e.newValue,
-      created_at: e.createdAt,
-    })),
-    pending_since: ticket.pendingSince,
-    paused_minutes: ticket.pausedMinutes,
-    resolved_at: ticket.resolvedAt,
-    closed_at: ticket.closedAt,
-    archived_at: ticket.archivedAt,
-    ack_cycle: ticket.ackCycle,
-    acked_through_cycle: ticket.ackedThroughCycle,
-    created_at: ticket.createdAt,
-    updated_at: ticket.updatedAt,
-    // `allowed_transitions` and the SLA figures are added in 2.3, once the state
-    // machine and clock exist.
-  };
-}
-
-function loadDetail(ticketId: string) {
-  return prisma.ticket.findUnique({ where: { id: ticketId }, include: detailInclude });
 }
 
 // --- Duplicate check ---------------------------------------------------------
@@ -290,7 +218,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     return created.id;
   });
 
-  res.status(201).json(toDetail((await loadDetail(ticketId))!));
+  res.status(201).json(toTicketDetail((await loadTicketDetail(ticketId))!));
 });
 
 // --- List --------------------------------------------------------------------
@@ -336,14 +264,14 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 type TicketParams = { id: string };
 
 router.get('/:id', requireTicketAccess, async (req: Request<TicketParams>, res: Response): Promise<void> => {
-  const ticket = await loadDetail(req.params.id);
+  const ticket = await loadTicketDetail(req.params.id);
 
   if (!ticket) {
     res.status(404).json({ error: 'Ticket not found' });
     return;
   }
 
-  res.json(toDetail(ticket));
+  res.json(toTicketDetail(ticket));
 });
 
 // --- Edit fields -------------------------------------------------------------
@@ -412,7 +340,7 @@ router.patch('/:id', requireTicketAccess, async (req: Request<TicketParams>, res
   // reassignments and replies, and ticket_events has no event type for a field edit.
   await prisma.ticket.update({ where: { id: req.params.id }, data });
 
-  res.json(toDetail((await loadDetail(req.params.id))!));
+  res.json(toTicketDetail((await loadTicketDetail(req.params.id))!));
 });
 
 // --- Archive / restore -------------------------------------------------------
@@ -435,7 +363,7 @@ router.post('/:id/archive', requireTicketAccess, async (req: Request<TicketParam
     await writeEvent(tx, { ticketId: ticket.id, eventType: 'archived', actorId: actor.userId });
   });
 
-  res.json(toDetail((await loadDetail(ticket.id))!));
+  res.json(toTicketDetail((await loadTicketDetail(ticket.id))!));
 });
 
 router.post('/:id/restore', requireTicketAccess, async (req: Request<TicketParams>, res: Response): Promise<void> => {
@@ -456,7 +384,7 @@ router.post('/:id/restore', requireTicketAccess, async (req: Request<TicketParam
     await writeEvent(tx, { ticketId: ticket.id, eventType: 'restored', actorId: actor.userId });
   });
 
-  res.json(toDetail((await loadDetail(ticket.id))!));
+  res.json(toTicketDetail((await loadTicketDetail(ticket.id))!));
 });
 
 export { router as ticketsRouter };

@@ -65,6 +65,7 @@ model User {
   assignedTickets      Ticket[]             @relation("AssignedTickets")
   collaboratingTickets TicketCollaborator[]
   ticketEvents         TicketEvent[]
+  replies              Reply[]
 
   @@map("users")
 }
@@ -157,6 +158,9 @@ model Reply {
 
   // Relations
   ticket Ticket @relation(fields: [ticketId], references: [id])
+  // The author is always the logged-in user who recorded the reply. For a customer
+  // reply that is the agent transcribing it, since customers are not users here.
+  author User   @relation(fields: [authorId], references: [id])
 
   // Indexes
   @@index([ticketId])

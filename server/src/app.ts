@@ -3,6 +3,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { authRouter } from './features/auth/auth.routes.js';
 import { ticketsRouter } from './features/tickets/tickets.routes.js';
+import { repliesRouter } from './features/tickets/replies.routes.js';
 
 const app = express();
 
@@ -17,6 +18,7 @@ app.use(cors({
 // Routes
 app.use('/api/auth', authRouter);
 app.use('/api/tickets', ticketsRouter);
+app.use('/api/tickets', repliesRouter);
 
 // Health check
 app.get('/api/health', (_req, res) => {
