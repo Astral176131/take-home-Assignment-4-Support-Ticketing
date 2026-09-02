@@ -665,6 +665,84 @@ body {
 .status-actions { display: flex; flex-direction: column; gap: 0.5rem; }
 .archive-btn { width: 100%; margin-top: 0.5rem; }
 
+/* ===== Ticket form ===== */
+.ticket-form {
+  max-width: 720px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.1rem;
+}
+
+@media (max-width: 700px) {
+  .form-row { grid-template-columns: 1fr; }
+}
+
+.ticket-form textarea,
+.ticket-form select {
+  padding: 0.7rem 0.85rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.ticket-form textarea { resize: vertical; }
+
+.ticket-form textarea:focus,
+.ticket-form select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color);
+}
+
+/* ===== Duplicate warning ===== */
+.duplicate-warning {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 0.85rem;
+}
+
+.duplicate-warning strong { color: var(--warning); }
+
+.duplicate-warning ul {
+  list-style: none;
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.duplicate-warning li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.duplicate-warning a { color: var(--accent-hover); }
+
 /* ===== Loading Screen ===== */
 .loading-screen {
   min-height: 100vh;

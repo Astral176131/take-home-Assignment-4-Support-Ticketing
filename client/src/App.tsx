@@ -6,6 +6,7 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { QueuePage } from './pages/QueuePage';
 import { TicketDetailPage } from './pages/TicketDetailPage';
+import { NewTicketPage } from './pages/NewTicketPage';
 
 function App() {
   return (
@@ -23,6 +24,8 @@ function App() {
           >
             <Route index element={<DashboardPage />} />
             <Route path="tickets" element={<QueuePage />} />
+            {/* Declared before the :id route so "new" isn't read as a ticket id. */}
+            <Route path="tickets/new" element={<NewTicketPage />} />
             <Route path="tickets/:id" element={<TicketDetailPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
