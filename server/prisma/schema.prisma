@@ -72,7 +72,9 @@ model User {
 model Requester {
   id        String   @id @default(uuid())
   name      String
-  email     String
+  // Unique so a customer's ticket history can never split across two records.
+  // Emails are lowercased before they reach here.
+  email     String   @unique
   createdAt DateTime @default(now()) @map("created_at")
 
   // Relations

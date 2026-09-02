@@ -1,7 +1,8 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { authRouter } from './features/auth/auth.routes.js';
+import { ticketsRouter } from './features/tickets/tickets.routes.js';
 
 const app = express();
 
@@ -15,10 +16,21 @@ app.use(cors({
 
 // Routes
 app.use('/api/auth', authRouter);
+app.use('/api/tickets', ticketsRouter);
 
 // Health check
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+/**
+ * Anything a route throws lands here. Express 5 forwards rejected async handlers
+ * automatically, so this catches them too. The client gets a plain JSON error — never a
+ * stack trace or an HTML error page — while the detail goes to the server log.
+ */
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 export { app };

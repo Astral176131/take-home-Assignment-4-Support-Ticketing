@@ -138,8 +138,10 @@ export function requireTicketAccess(req: Request, res: Response, next: NextFunct
     return;
   }
 
+  // Express 5 types a route param as string | string[], since a wildcard can capture
+  // several segments. This route takes a single id, so anything else is a bad request.
   const ticketId = req.params.id;
-  if (!ticketId) {
+  if (typeof ticketId !== 'string' || !ticketId) {
     res.status(400).json({ error: 'Ticket ID is required' });
     return;
   }
