@@ -1,21 +1,13 @@
-import { Prisma, TicketStatus } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
+import { STATUS_TO_API, allowedTransitions } from './stateMachine.js';
+import { computeSla } from './sla.js';
 
-/**
- * The schema stores the first state as `new_ticket` because `new` is awkward as an enum
- * member, but the brief's state machine calls it `new` — so the API speaks `new` and the
- * rename stays an internal detail.
- */
-export const STATUS_TO_API: Record<TicketStatus, string> = {
-  new_ticket: 'new',
-  open: 'open',
-  pending: 'pending',
-  resolved: 'resolved',
-  closed: 'closed',
-};
+export { STATUS_TO_API };
 
 export const detailInclude = {
   requester: true,
+  priority: true,
   assignee: { select: { id: true, name: true, email: true, role: true } },
   collaborators: {
     include: { agent: { select: { id: true, name: true, email: true } } },
@@ -37,10 +29,31 @@ export type TicketDetail = Prisma.TicketGetPayload<{ include: typeof detailInclu
  * One ticket with everything needed to render it. Shared by every endpoint that returns
  * a ticket, so the shape can only change in one place.
  *
+ * Takes the viewer's role because `allowed_transitions` depends on it — an agent is not
+ * offered "close". The server computes that list so the rules exist in exactly one place;
+ * the endpoint still re-checks on the way in, whatever the client was told.
+ *
  * Responses use snake_case to match the vocabulary the brief uses for its fields.
  */
-export function toTicketDetail(ticket: TicketDetail) {
+export function toTicketDetail(ticket: TicketDetail, viewerRole: Role) {
   return {
+    allowed_transitions: allowedTransitions({
+      status: ticket.status,
+      assigneeId: ticket.assigneeId,
+      closedAt: ticket.closedAt,
+      role: viewerRole,
+    }),
+    sla: computeSla({
+      status: ticket.status,
+      clockStartedAt: ticket.clockStartedAt,
+      pausedMinutes: ticket.pausedMinutes,
+      pendingSince: ticket.pendingSince,
+      resolvedAt: ticket.resolvedAt,
+      closedAt: ticket.closedAt,
+      targetResponseMinutes: ticket.priority.targetResponseMinutes,
+      ackCycle: ticket.ackCycle,
+      ackedThroughCycle: ticket.ackedThroughCycle,
+    }),
     id: ticket.id,
     subject: ticket.subject,
     description: ticket.description,
@@ -75,10 +88,9 @@ export function toTicketDetail(ticket: TicketDetail) {
     archived_at: ticket.archivedAt,
     ack_cycle: ticket.ackCycle,
     acked_through_cycle: ticket.ackedThroughCycle,
+    clock_started_at: ticket.clockStartedAt,
     created_at: ticket.createdAt,
     updated_at: ticket.updatedAt,
-    // `allowed_transitions` and the SLA figures are added in 2.3, once the state
-    // machine and clock exist.
   };
 }
 

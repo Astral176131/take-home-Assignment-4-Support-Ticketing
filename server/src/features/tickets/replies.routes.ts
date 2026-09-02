@@ -103,7 +103,7 @@ router.post(
       }
     });
 
-    res.status(201).json(toTicketDetail((await loadTicketDetail(ticket.id))!));
+    res.status(201).json(toTicketDetail((await loadTicketDetail(ticket.id))!, actor.role));
   }
 );
 

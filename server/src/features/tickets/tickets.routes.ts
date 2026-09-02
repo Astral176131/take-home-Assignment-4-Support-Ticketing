@@ -218,7 +218,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     return created.id;
   });
 
-  res.status(201).json(toTicketDetail((await loadTicketDetail(ticketId))!));
+  res.status(201).json(toTicketDetail((await loadTicketDetail(ticketId))!, actor.role));
 });
 
 // --- List --------------------------------------------------------------------
@@ -271,7 +271,7 @@ router.get('/:id', requireTicketAccess, async (req: Request<TicketParams>, res: 
     return;
   }
 
-  res.json(toTicketDetail(ticket));
+  res.json(toTicketDetail(ticket, req.user!.role));
 });
 
 // --- Edit fields -------------------------------------------------------------
@@ -340,7 +340,7 @@ router.patch('/:id', requireTicketAccess, async (req: Request<TicketParams>, res
   // reassignments and replies, and ticket_events has no event type for a field edit.
   await prisma.ticket.update({ where: { id: req.params.id }, data });
 
-  res.json(toTicketDetail((await loadTicketDetail(req.params.id))!));
+  res.json(toTicketDetail((await loadTicketDetail(req.params.id))!, req.user!.role));
 });
 
 // --- Archive / restore -------------------------------------------------------
@@ -363,7 +363,7 @@ router.post('/:id/archive', requireTicketAccess, async (req: Request<TicketParam
     await writeEvent(tx, { ticketId: ticket.id, eventType: 'archived', actorId: actor.userId });
   });
 
-  res.json(toTicketDetail((await loadTicketDetail(ticket.id))!));
+  res.json(toTicketDetail((await loadTicketDetail(ticket.id))!, actor.role));
 });
 
 router.post('/:id/restore', requireTicketAccess, async (req: Request<TicketParams>, res: Response): Promise<void> => {
@@ -384,7 +384,7 @@ router.post('/:id/restore', requireTicketAccess, async (req: Request<TicketParam
     await writeEvent(tx, { ticketId: ticket.id, eventType: 'restored', actorId: actor.userId });
   });
 
-  res.json(toTicketDetail((await loadTicketDetail(ticket.id))!));
+  res.json(toTicketDetail((await loadTicketDetail(ticket.id))!, actor.role));
 });
 
 export { router as ticketsRouter };
