@@ -476,6 +476,195 @@ body {
 
 .table-total { margin-top: 0.75rem; }
 
+/* ===== Ticket detail ===== */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.back-link {
+  display: inline-block;
+  margin-bottom: 1rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.back-link:hover { color: var(--accent-hover); }
+
+.ticket-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .ticket-layout { grid-template-columns: 1fr; }
+}
+
+.ticket-main,
+.ticket-sidebar {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+}
+
+.ticket-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.ticket-heading h2 { font-size: 1.25rem; font-weight: 600; }
+
+.ticket-description {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* ===== Activity feed ===== */
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin: 1rem 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.tab {
+  padding: 0.5rem 0.85rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.tab:hover { color: var(--text-primary); }
+.tab.active { color: var(--accent-hover); border-bottom-color: var(--accent); }
+
+.feed { list-style: none; display: flex; flex-direction: column; gap: 1rem; }
+.feed-empty { padding: 1.5rem 0; }
+
+.feed-item { font-size: 0.88rem; }
+
+.feed-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.feed-author { font-weight: 600; }
+
+.feed-body { color: var(--text-secondary); white-space: pre-wrap; }
+
+/* An internal note must never read as something the customer saw. */
+.feed-internal {
+  border-left: 3px solid var(--warning);
+  padding-left: 0.75rem;
+  background: rgba(245, 158, 11, 0.05);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.chip-internal { background: rgba(245, 158, 11, 0.18); color: var(--warning); }
+.chip-customer { background: rgba(56, 189, 248, 0.15); color: #7dd3fc; }
+
+.feed-event {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.feed-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--border-color);
+  flex-shrink: 0;
+}
+
+/* ===== Reply form ===== */
+.reply-form {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.reply-form textarea {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  resize: vertical;
+  outline: none;
+}
+
+.reply-form textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.reply-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.reply-controls .btn { margin-left: auto; }
+
+/* ===== Ticket sidebar ===== */
+.ticket-fields { display: grid; grid-template-columns: 1fr; gap: 0.15rem; }
+
+.ticket-fields dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-top: 0.85rem;
+}
+
+.ticket-fields dt:first-child { margin-top: 0; }
+.ticket-fields dd { font-size: 0.85rem; }
+
+.sidebar-section {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.sidebar-section h3 {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.status-actions { display: flex; flex-direction: column; gap: 0.5rem; }
+.archive-btn { width: 100%; margin-top: 0.5rem; }
+
 /* ===== Loading Screen ===== */
 .loading-screen {
   min-height: 100vh;

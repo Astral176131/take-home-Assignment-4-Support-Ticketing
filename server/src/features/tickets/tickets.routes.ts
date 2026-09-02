@@ -3,7 +3,7 @@ import { Category, Prisma, Priority } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate, requireTicketAccess } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
-import { STATUS_TO_API, loadTicketDetail, toTicketDetail } from './detail.js';
+import { STATUS_TO_API, ticketPayload } from './detail.js';
 import { computeSla } from './sla.js';
 
 const router = Router();
@@ -236,7 +236,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     return created.id;
   });
 
-  res.status(201).json(toTicketDetail((await loadTicketDetail(ticketId))!, actor.role));
+  res.status(201).json((await ticketPayload(ticketId, actor.role))!);
 });
 
 // --- List --------------------------------------------------------------------
@@ -278,14 +278,14 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 type TicketParams = { id: string };
 
 router.get('/:id', requireTicketAccess, async (req: Request<TicketParams>, res: Response): Promise<void> => {
-  const ticket = await loadTicketDetail(req.params.id);
+  const payload = await ticketPayload(req.params.id, req.user!.role);
 
-  if (!ticket) {
+  if (!payload) {
     res.status(404).json({ error: 'Ticket not found' });
     return;
   }
 
-  res.json(toTicketDetail(ticket, req.user!.role));
+  res.json(payload);
 });
 
 // --- Edit fields -------------------------------------------------------------
@@ -354,7 +354,7 @@ router.patch('/:id', requireTicketAccess, async (req: Request<TicketParams>, res
   // reassignments and replies, and ticket_events has no event type for a field edit.
   await prisma.ticket.update({ where: { id: req.params.id }, data });
 
-  res.json(toTicketDetail((await loadTicketDetail(req.params.id))!, req.user!.role));
+  res.json((await ticketPayload(req.params.id, req.user!.role))!);
 });
 
 // --- Archive / restore -------------------------------------------------------
@@ -377,7 +377,7 @@ router.post('/:id/archive', requireTicketAccess, async (req: Request<TicketParam
     await writeEvent(tx, { ticketId: ticket.id, eventType: 'archived', actorId: actor.userId });
   });
 
-  res.json(toTicketDetail((await loadTicketDetail(ticket.id))!, actor.role));
+  res.json((await ticketPayload(ticket.id, actor.role))!);
 });
 
 router.post('/:id/restore', requireTicketAccess, async (req: Request<TicketParams>, res: Response): Promise<void> => {
@@ -398,7 +398,7 @@ router.post('/:id/restore', requireTicketAccess, async (req: Request<TicketParam
     await writeEvent(tx, { ticketId: ticket.id, eventType: 'restored', actorId: actor.userId });
   });
 
-  res.json(toTicketDetail((await loadTicketDetail(ticket.id))!, actor.role));
+  res.json((await ticketPayload(ticket.id, actor.role))!);
 });
 
 export { router as ticketsRouter };

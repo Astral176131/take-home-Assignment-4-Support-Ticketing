@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma.js';
 import { authenticate, requireTicketAccess } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { pauseCreditMinutes } from './clock.js';
-import { loadTicketDetail, toTicketDetail } from './detail.js';
+import { ticketPayload } from './detail.js';
 import {
   API_STATUSES,
   API_TO_STATUS,
@@ -106,7 +106,7 @@ router.post(
       });
     });
 
-    res.json(toTicketDetail((await loadTicketDetail(ticket.id))!, actor.role));
+    res.json((await ticketPayload(ticket.id, actor.role))!);
   }
 );
 

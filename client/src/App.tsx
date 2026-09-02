@@ -5,6 +5,7 @@ import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { QueuePage } from './pages/QueuePage';
+import { TicketDetailPage } from './pages/TicketDetailPage';
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
           >
             <Route index element={<DashboardPage />} />
             <Route path="tickets" element={<QueuePage />} />
+            <Route path="tickets/:id" element={<TicketDetailPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

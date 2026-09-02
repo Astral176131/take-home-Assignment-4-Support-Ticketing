@@ -50,9 +50,12 @@ export interface Reply {
 export interface TicketEvent {
   id: string;
   event_type: EventType;
+  /** Who performed the action. */
   actor: Person | null;
   old_value: string | null;
   new_value: string | null;
+  /** Who the action was about, for collaborator and reassignment rows. */
+  target: Person | null;
   created_at: string;
 }
 
