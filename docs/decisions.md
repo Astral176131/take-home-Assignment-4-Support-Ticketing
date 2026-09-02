@@ -1,43 +1,212 @@
 # Decisions
 
-Log the decisions that actually shaped this codebase — the ones where a real alternative existed and
-you picked one. At least five entries. For each: what you chose, what you rejected, and why. At least
-one entry must be a decision you later reversed — say what changed your mind. It can be any entry
-below, not necessarily the last one; add a **Later reversed:** line to whichever one it is.
+The choices that shaped this codebase, recorded as they were made rather than
+reconstructed afterwards. Each one had a real alternative.
 
-## Decision 1 — JWT storage: httpOnly cookie vs localStorage
+---
 
-- **Chose:** httpOnly cookie with `secure` (prod) and `sameSite: 'lax'`
-- **Rejected:** localStorage
-- **Why:** httpOnly cookies are immune to XSS — JavaScript cannot read or exfiltrate the token. localStorage is readable by any script running on the page, which means a single XSS vulnerability leaks every active session. The build prompt mandates this, but even without the mandate, httpOnly is the correct choice for a tool that handles internal support data.
+## 1. Customers are records, not users — and their email is unique
 
-## Decision 2 — Cross-origin cookie strategy: `sameSite: 'lax'` + Vercel proxy vs `sameSite: 'none'`
+- **Chose:** a `requesters` table holding name and email, with a unique index on the email
+  and lowercasing before insert. A ticket links to a requester; find-or-create resolves one
+  from the email on the payload.
+- **Rejected:** typing the customer's name and email onto each ticket; or making customers
+  users of the system with accounts.
+- **Why:** a customer who writes twice must have both tickets attached to the same record,
+  or "what else has this person raised" cannot be answered. Customers never sign in, hold
+  no password and have no role, so making them users would mean a table where most columns
+  are meaningless for most rows.
 
-- **Chose:** `sameSite: 'lax'` with a Vercel rewrite/proxy in production so the API appears to be on the same origin as the frontend
-- **Rejected:** `sameSite: 'none'` with `secure: true` for true cross-origin cookies
-- **Why:** `sameSite: 'none'` cookies are increasingly restricted by browsers (partitioned storage, third-party cookie blocking). A proxy avoids the entire class of problems — the browser sees one origin, cookies "just work." Also avoids the complexity of configuring CORS with explicit `Access-Control-Allow-Origin` and `credentials: true` across environments.
+  The unique index was the part worth arguing about, because the brief's schema doesn't
+  list one. A test firing two simultaneous ticket creations for the same new customer
+  showed that without it both requests insert, producing two records for one person and
+  splitting her history — silently, with nothing anywhere indicating a problem. The index
+  did not fix the race. It made it **visible**, turning quiet corruption into a loud
+  conflict the endpoint catches and recovers from. That trade — fail loudly rather than
+  corrupt quietly — is the reasoning, not the index itself.
 
-## Decision 3 — Backend structure: feature folders with inline handlers vs controller/service layers
+---
 
-- **Chose:** Feature-based folders (`features/auth/`, `features/tickets/`) with a single route file per feature and handlers inline. Shared middleware in `middleware/`.
-- **Rejected:** Separate controller and service layers per feature (routes → controllers → services → Prisma)
-- **Why:** The build prompt explicitly warns against "repository-pattern-over-an-ORM" and "unnecessary abstraction." With Prisma as the ORM, a service layer is a thin pass-through that adds files without adding value. A junior engineer can open `auth.routes.ts` and see the full request→response flow in one file. Three layers × five features = 15 files of indirection for no real benefit at this scale.
+## 2. Resolving the requester happens outside the ticket transaction
 
-## Decision 4 — Prisma schema: `new_ticket` enum value vs `new`
+- **Chose:** find-or-create the customer first, then open a transaction for the ticket and
+  its history rows.
+- **Rejected:** doing everything, customer included, in one transaction.
+- **Why:** forced by the fix to the race above, and better on its own merits. Postgres
+  aborts an entire transaction the moment any statement in it fails — so a request that
+  lost the insert race could not recover *from inside* the transaction; every subsequent
+  query would fail too. It has to read the winner's row from outside.
 
-- **Chose:** `new_ticket` as the Prisma enum value for the "new" ticket status
-- **Rejected:** Using `new` directly
-- **Why:** `new` is a reserved keyword in JavaScript/TypeScript and causes issues in some code generation contexts. Prisma generates typed constants from enum values, and `Status.new` would conflict with constructor syntax. The database column still stores a clean value, and the API maps it for display purposes. This is a pragmatic concession to the tooling.
+  It is also the more honest boundary. A customer record is not part of a ticket's atomic
+  state. If the ticket write then fails, what remains is a customer with no tickets, which
+  is harmless — as opposed to a ticket with no history, which is not.
 
-## Decision 5 — JWT_SECRET validation: fail-fast at startup vs lazy check on first request
+---
 
-- **Chose:** Lazy check via `getJwtSecret()` function called on first auth request
-- **Rejected:** Throw at module import time (`const JWT_SECRET = process.env.JWT_SECRET; if (!JWT_SECRET) throw ...`)
-- **Why:** Initially implemented the fail-fast approach (Decision 5 was originally "fail at startup"). **Later reversed:** The fail-fast approach crashed on import because the middleware module is loaded before `dotenv.config()` runs in `index.ts`. The import chain is `index.ts → app.ts → auth.routes.ts → middleware/auth.ts`, and by the time the middleware's top-level code runs, `process.env.JWT_SECRET` is still undefined. Switched to a lazy getter that checks on first use, by which point dotenv has loaded.
-- **Later reversed:** Yes — the original fail-fast was correct in principle but wrong in execution order. The lazy approach preserves the same safety (first request will fail immediately if the secret is missing) while respecting Node.js module loading order.
+## 3. Attaching people to a ticket is a supervisor power, everywhere
 
-## Decision 6 — Environment variable loading: side-effect import vs `dotenv.config()`
+- **Chose:** an agent may assign a new ticket to themselves or leave it unassigned, and
+  cannot add collaborators. A supervisor may assign any agent and add any agents, but never
+  themselves or the other supervisor. The creating agent is always attached as a
+  collaborator, so they keep access however the ticket ends up assigned.
+- **Rejected:** the brief's authorization matrix, which grants collaborator management to
+  the assignee and existing collaborators as well as supervisors.
+- **Why:** **this is a deliberate deviation from the brief and worth being explicit about.**
+  The matrix already forbids an agent from reassigning a ticket "not even to another
+  agent". But if that same agent can add a colleague as a collaborator, they can share the
+  work sideways anyway — the restriction has a side door. Narrowing collaborator management
+  to supervisors makes one rule instead of two: routing work to another person is a
+  supervisor's call, at creation, at reassignment and at collaboration alike.
 
-- **Chose:** `import 'dotenv/config'` as the very first line in the entry point (`index.ts`).
-- **Rejected:** `import dotenv from 'dotenv'; dotenv.config();`
-- **Why:** In ES/TypeScript modules, `import` statements are hoisted and evaluated *before* any runtime code execution. By calling `dotenv.config()` imperatively, any dependencies imported further down the file (such as `app.js` → `lib/prisma.ts`) evaluate before the environment variables are loaded. This caused Prisma's Postgres connection pool to initialize with an undefined `DATABASE_URL`, resulting in an `ECONNREFUSED` error as it fell back to querying localhost. The side-effect import `import 'dotenv/config'` executes the `.env` loading *during* the import phase, fixing the initialization order.
+  Supervisors are excluded from both roles because they already have full access to every
+  ticket and every action, so a row naming them grants nothing and adds noise to the
+  collaborator list on screen. The consequence — supervisors never appear as assignees in
+  Phase 5's per-agent breakdown — is intended, with one exception in decision 4.
+
+---
+
+## 4. A supervisor becomes an assignee only by taking over an escalation
+
+- **Chose:** nobody can hand a supervisor a ticket at creation, but a supervisor may
+  reassign one to themselves later.
+- **Rejected:** supervisors never being assignees at all; or letting them be assigned
+  at creation like anyone else.
+- **Why:** real desks escalate. An agent gets stuck, and a supervisor takes the ticket
+  over. Forbidding that entirely would mean the only way to escalate is informal. Allowing
+  it at creation, though, would make "assignee" stop meaning "the agent doing the work" in
+  the ordinary case.
+
+  Creation and reassignment therefore differ on purpose: one is routing, the other is
+  intervention.
+
+---
+
+## 5. `resolved_at` and `closed_at` are historical markers, not state flags
+
+- **Chose:** reopening a ticket leaves both timestamps in place. They record the last time
+  each thing happened. Only `status` says where a ticket is now.
+- **Rejected:** clearing them on reopen so that a non-null `closed_at` always means closed.
+- **Why:** clearing them destroys information — you could no longer ask when a ticket was
+  first resolved. Keeping them costs a discipline instead: **no code may infer state from
+  these columns.** Every read keys off `status` first, including the SLA clock, which
+  freezes at `resolved_at` only when the status is actually `resolved`. Phase 5's
+  "resolved this week" count filters on current status for the same reason.
+
+  This is the decision most likely to be violated later by accident, which is why it is
+  written down rather than left implicit.
+
+---
+
+## 6. The SLA clock has an explicit start, and only a reopen from closed restarts it
+
+- **Chose:** a `clock_started_at` column, equal to creation time until a `closed → open`
+  reopen resets it along with `paused_minutes`. A `resolved → open` reopen resets nothing.
+- **Rejected:** folding the restart into `paused_minutes` by crediting all elapsed time at
+  once; deriving the clock start by replaying `ticket_events`; or restarting on both kinds
+  of reopen.
+- **Why:** three separate calls.
+
+  *Why a column:* overloading `paused_minutes` would make it mean "time excluded from the
+  clock" rather than "time spent waiting on the customer" — subtle, and the sort of thing
+  that is wrong six months later. Replaying events would force Phase 5's dashboard
+  aggregates to scan the event table per ticket instead of computing in plain SQL.
+
+  *Why only `closed → open`:* the brief has that transition, and only that one, increment
+  `ack_cycle` — its own signal that a new cycle has begun. `resolved → open` is described
+  as undoing a premature resolve, often within minutes. Restarting the clock there would
+  make resolve-then-reopen a way to wipe a breach.
+
+---
+
+## 7. The server decides which status moves are legal, and says so in the payload
+
+- **Chose:** every ticket response carries `allowed_transitions`, computed for that user
+  and that ticket. The UI renders one button per entry and holds no rules of its own.
+- **Rejected:** the frontend carrying its own copy of the state machine to decide which
+  buttons to show.
+- **Why:** the same rules written twice in two languages drift. Here the list the client
+  receives is produced by asking the *same function* the endpoint enforces with — they
+  cannot disagree, structurally. An agent never receives `closed`, so no Close button can
+  exist for them; when a reopen window lapses the list arrives empty and the button
+  disappears without the page knowing why.
+
+  The endpoint still re-checks every request regardless of what the client was told.
+  Assume a hostile caller with curl.
+
+---
+
+## 8. Two error codes with different meanings, kept apart
+
+- **Chose:** 400 for a request that does not make sense, 403 for one the caller is not
+  allowed to make, 409 for one that conflicts with the ticket's current state. An unknown
+  status value is 400; a real status that is an illegal move is 409.
+- **Rejected:** using 400 for all rejections.
+- **Why:** the brief asks for illegal transitions to be refused "with a specific
+  human-readable reason". The status code is half of that reason. "You sent nonsense",
+  "you may not do this", and "this ticket is not in a state where that is possible" are
+  three different problems for the caller, and only the last one might succeed later.
+
+---
+
+## 9. Warn about duplicate tickets rather than blocking them
+
+- **Chose:** when an agent enters a customer's email on the create form, the system shows
+  that customer's open tickets — subject, status and who holds each. Filing anyway is
+  allowed.
+- **Rejected:** refusing to create a second ticket for the same customer and description.
+- **Why:** the system cannot tell a follow-up from a genuinely new problem; only a person
+  can. A customer can legitimately have two issues at once, and blocking would sometimes be
+  wrong in a way the agent could not override.
+
+  This needed a deliberate exception to the authorization model: the duplicate check
+  returns tickets the asking agent cannot otherwise see. Without it the feature would be
+  silently useless in exactly the case it exists for — a duplicate of a ticket held by
+  *someone else*. The exception is kept as narrow as it can be: subject, status and holder,
+  never the description or replies, and opening the ticket itself still returns 403.
+
+- **Later reversed:** blocking was chosen instead. What changed the mind was thinking about
+  the scenario the brief opens with — a customer emailing three times about the same issue
+  because nobody could tell it was already being handled. A warning still permits exactly
+  that outcome, since it relies on a busy agent reading it. The rule agreed is *same
+  requester plus same description, against open tickets only*, so a genuine recurrence
+  after closure still gets its own ticket.
+
+  **At the time of writing the code still warns rather than blocks.** What remains
+  undecided is enforcement: a database constraint makes it airtight even against two agents
+  filing simultaneously but leaves no room for an override, while an application check is
+  simpler and overridable but carries the same read-then-write race that decision 1 was
+  about. That choice is what is holding the change.
+
+---
+
+## 10. Testing against a real database, in its own Supabase project
+
+- **Chose:** Vitest and Supertest against a second, separate Postgres database. Each test
+  file creates the users, tickets and customers it needs, and deletes them afterwards.
+- **Rejected:** mocking Prisma; or sharing one database between development and tests.
+- **Why:** the rules worth testing here are transactional and constraint-shaped — a status
+  change and its history row landing together, a unique index rejecting a duplicate, an
+  access rule expressed as a `WHERE` clause. A mocked Prisma would assert that the code
+  calls the functions the code calls, and would have caught none of the three real bugs the
+  suite has found so far.
+
+  Separate databases because the tests create and delete freely, and because Phase 5 has to
+  assert exact dashboard counts against a known dataset — impossible if demo data is
+  underfoot.
+
+---
+
+## Bugs these decisions surfaced
+
+Worth recording, because each one was found by a test rather than in production:
+
+1. **Prisma drops `undefined` filter values** instead of matching nothing. An absent user
+   id turned the collaborator lookup in `checkTicketAccess` into "any collaborator" and
+   allowed a stranger through. Unreachable over HTTP, since the id comes from a verified
+   JWT — but the helper now fails closed.
+2. **The requester race** described in decision 1, which returned a 500 to one of two
+   simultaneous filings.
+3. **The server did not compile.** `tsc` had never been run; Express 5 types a route
+   parameter as `string | string[]`, and Phase 1's code assumed a string. Tests never
+   caught it because Vitest transpiles without typechecking — and `npm run build` is
+   exactly what Render will run at deploy time.
