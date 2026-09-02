@@ -24,6 +24,9 @@ export function Layout() {
           <NavLink to="/tickets" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
             Tickets
           </NavLink>
+          <NavLink to="/my-tickets" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+            My tickets
+          </NavLink>
         </div>
 
         <div className="sidebar-footer">

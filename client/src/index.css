@@ -743,6 +743,63 @@ body {
 
 .duplicate-warning a { color: var(--accent-hover); }
 
+/* ===== People controls (supervisor only) ===== */
+.people-control {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.people-control select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.people-control select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.people-control .btn { padding: 0.4rem 0.7rem; font-size: 0.8rem; }
+
+.collaborator-list {
+  list-style: none;
+  margin: 0.5rem 0 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.collaborator-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.link-button:hover:not(:disabled) { color: var(--error); }
+.link-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ===== Loading Screen ===== */
 .loading-screen {
   min-height: 100vh;

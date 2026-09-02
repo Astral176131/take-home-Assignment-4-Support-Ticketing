@@ -6,6 +6,7 @@ import { PriorityBadge, SlaBadge, StatusBadge } from '../components/Badges';
 import { ActivityFeed } from '../components/ActivityFeed';
 import { ReplyForm } from '../components/ReplyForm';
 import { StatusActions } from '../components/StatusActions';
+import { TicketPeople } from '../components/TicketPeople';
 import type { Ticket, TicketStatus } from '../types';
 
 export function TicketDetailPage() {
@@ -55,6 +56,15 @@ export function TicketDetailPage() {
 
   const toggleArchive = () =>
     act(() => api.post<Ticket>(`/api/tickets/${id}/${ticket?.archived_at ? 'restore' : 'archive'}`));
+
+  const reassign = (assigneeId: string) =>
+    act(() => api.post<Ticket>(`/api/tickets/${id}/reassign`, { assignee_id: assigneeId }));
+
+  const addCollaborator = (agentId: string) =>
+    act(() => api.post<Ticket>(`/api/tickets/${id}/collaborators`, { agent_id: agentId }));
+
+  const removeCollaborator = (agentId: string) =>
+    act(() => api.del<Ticket>(`/api/tickets/${id}/collaborators/${agentId}`));
 
   if (loading) return <p className="muted">Loading…</p>;
 
@@ -137,6 +147,16 @@ export function TicketDetailPage() {
             <dt>Created</dt>
             <dd className="muted">{timeAgo(ticket.created_at)}</dd>
           </dl>
+
+          {!ticket.archived_at && (
+            <TicketPeople
+              ticket={ticket}
+              busy={busy}
+              onReassign={reassign}
+              onAddCollaborator={addCollaborator}
+              onRemoveCollaborator={removeCollaborator}
+            />
+          )}
 
           <div className="sidebar-section">
             <h3>Actions</h3>

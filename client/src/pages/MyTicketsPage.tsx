@@ -5,51 +5,40 @@ import { TicketTable } from '../components/TicketTable';
 import { useAuth } from '../context/AuthContext';
 import type { Paged, TicketListItem } from '../types';
 
-export function QueuePage() {
+/**
+ * Goal 5's "one list of every ticket where they are the primary assignee or a
+ * collaborator". For a supervisor this is narrower than the queue rather than wider: it
+ * shows only what they hold personally, which means escalations they have taken on.
+ */
+export function MyTicketsPage() {
   const { user } = useAuth();
   const [tickets, setTickets] = useState<TicketListItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
     api
-      .get<Paged<TicketListItem>>(`/api/tickets${showArchived ? '?archived=true' : ''}`)
+      .get<Paged<TicketListItem>>('/api/tickets/mine')
       .then((data) => {
         setTickets(data.items);
         setTotal(data.total);
         setError('');
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load tickets'))
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load your tickets'))
       .finally(() => setLoading(false));
-  }, [showArchived]);
+  }, []);
 
   return (
     <div className="page">
       <header className="page-header">
         <div>
-          <h2>Queue</h2>
+          <h2>My tickets</h2>
           <p className="page-subtitle">
-            {/* Scoping is enforced server-side; this only explains what you are seeing. */}
             {user?.role === 'supervisor'
-              ? 'Every ticket in the system'
-              : 'Tickets assigned to you or where you are a collaborator'}
+              ? 'Tickets you hold yourself, rather than the whole queue'
+              : 'Tickets assigned to you, and tickets you are collaborating on'}
           </p>
-        </div>
-        <div className="page-actions">
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-            />
-            Show archived
-          </label>
-          <Link className="btn btn-primary" to="/tickets/new">
-            New ticket
-          </Link>
         </div>
       </header>
 
@@ -59,9 +48,9 @@ export function QueuePage() {
         <p className="muted">Loading…</p>
       ) : tickets.length === 0 ? (
         <div className="empty-state">
-          <p>No tickets here yet.</p>
-          <Link className="btn btn-primary" to="/tickets/new">
-            Create the first one
+          <p>Nothing is on your plate right now.</p>
+          <Link className="btn" to="/tickets">
+            Browse the queue
           </Link>
         </div>
       ) : (
