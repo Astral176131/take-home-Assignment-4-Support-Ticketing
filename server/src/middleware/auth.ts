@@ -89,6 +89,14 @@ export async function checkTicketAccess(
   userId: string,
   userRole: Role
 ): Promise<{ allowed: boolean; reason?: string }> {
+  // Fail closed if we don't know who is asking, or about which ticket. Prisma drops
+  // `undefined` filter values rather than matching nothing, so an absent userId would
+  // otherwise turn the collaborator lookup below into "any collaborator" and allow
+  // a stranger through.
+  if (!ticketId || !userId) {
+    return { allowed: false, reason: 'You do not have access to this ticket' };
+  }
+
   // Supervisors can access any ticket
   if (userRole === 'supervisor') {
     return { allowed: true };
