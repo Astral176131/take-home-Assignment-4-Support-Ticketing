@@ -1,11 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-
-interface User {
-  id: string;
-  email: string;
-  name: string;
-  role: 'agent' | 'supervisor';
-}
+import { api } from '../lib/api';
+import type { User } from '../types';
 
 interface AuthContextType {
   user: User | null;
@@ -20,40 +15,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Check auth status on mount
+  // Restore the session on mount: the cookie is httpOnly, so the only way to know
+  // whether we are logged in is to ask the server.
   useEffect(() => {
-    fetch('/api/auth/me', { credentials: 'include' })
-      .then((res) => {
-        if (res.ok) return res.json();
-        throw new Error('Not authenticated');
-      })
+    api
+      .get<{ user: User }>('/api/auth/me')
       .then((data) => setUser(data.user))
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Login failed');
-    }
-
-    const data = await res.json();
+    const data = await api.post<{ user: User }>('/api/auth/login', { email, password });
     setUser(data.user);
   }, []);
 
   const logout = useCallback(async () => {
-    await fetch('/api/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
-    });
+    await api.post('/api/auth/logout');
     setUser(null);
   }, []);
 

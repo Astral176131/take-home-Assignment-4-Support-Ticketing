@@ -1,4 +1,4 @@
-import { Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export function Layout() {
@@ -18,8 +18,12 @@ export function Layout() {
         </div>
 
         <div className="sidebar-nav">
-          {/* Navigation links will be added in later phases */}
-          <p className="nav-placeholder">Dashboard coming soon</p>
+          <NavLink to="/" end className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+            Dashboard
+          </NavLink>
+          <NavLink to="/tickets" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+            Tickets
+          </NavLink>
         </div>
 
         <div className="sidebar-footer">

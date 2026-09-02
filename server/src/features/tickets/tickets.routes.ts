@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma.js';
 import { authenticate, requireTicketAccess } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { STATUS_TO_API, loadTicketDetail, toTicketDetail } from './detail.js';
+import { computeSla } from './sla.js';
 
 const router = Router();
 
@@ -46,9 +47,13 @@ async function findOrCreateRequester(name: string, email: string) {
 // --- Serializers -------------------------------------------------------------
 // Responses use snake_case to match the vocabulary the brief uses for its fields.
 
-function toListItem(ticket: Prisma.TicketGetPayload<{
-  include: { requester: true; assignee: { select: { id: true; name: true } } };
-}>) {
+const listInclude = {
+  requester: true,
+  priority: true,
+  assignee: { select: { id: true, name: true } },
+} satisfies Prisma.TicketInclude;
+
+function toListItem(ticket: Prisma.TicketGetPayload<{ include: typeof listInclude }>) {
   return {
     id: ticket.id,
     subject: ticket.subject,
@@ -57,6 +62,19 @@ function toListItem(ticket: Prisma.TicketGetPayload<{
     category: ticket.category,
     requester: { id: ticket.requester.id, name: ticket.requester.name, email: ticket.requester.email },
     assignee: ticket.assignee ? { id: ticket.assignee.id, name: ticket.assignee.name } : null,
+    // The queue's whole purpose is spotting what is at risk, so each row carries its own
+    // SLA standing rather than making the browser fetch every ticket to work it out.
+    sla: computeSla({
+      status: ticket.status,
+      clockStartedAt: ticket.clockStartedAt,
+      pausedMinutes: ticket.pausedMinutes,
+      pendingSince: ticket.pendingSince,
+      resolvedAt: ticket.resolvedAt,
+      closedAt: ticket.closedAt,
+      targetResponseMinutes: ticket.priority.targetResponseMinutes,
+      ackCycle: ticket.ackCycle,
+      ackedThroughCycle: ticket.ackedThroughCycle,
+    }),
     archived_at: ticket.archivedAt,
     created_at: ticket.createdAt,
     updated_at: ticket.updatedAt,
@@ -247,11 +265,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
   }
 
   const [items, total] = await Promise.all([
-    prisma.ticket.findMany({
-      where,
-      include: { requester: true, assignee: { select: { id: true, name: true } } },
-      orderBy: { createdAt: 'desc' },
-    }),
+    prisma.ticket.findMany({ where, include: listInclude, orderBy: { createdAt: 'desc' } }),
     prisma.ticket.count({ where }),
   ]);
 

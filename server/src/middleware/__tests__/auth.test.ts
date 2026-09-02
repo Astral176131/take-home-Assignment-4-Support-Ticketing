@@ -227,7 +227,11 @@ describe('Authorization Middleware', () => {
       { action: 'Close (resolved to closed)', gate: 'supervisorOnly', supervisor: true, assignee: false, collaborator: false, otherAgent: false },
       { action: 'Reopen (closed to open, within window)', gate: 'ticketAccess', supervisor: true, assignee: true, collaborator: true, otherAgent: false },
       { action: 'Reassign primary assignee', gate: 'supervisorOnly', supervisor: true, assignee: false, collaborator: false, otherAgent: false },
-      { action: 'Add/remove collaborator', gate: 'ticketAccess', supervisor: true, assignee: true, collaborator: true, otherAgent: false },
+      // Deliberate deviation from the brief's matrix, which grants this to the assignee
+      // and existing collaborators. Narrowed to supervisors so that attaching a person to
+      // a ticket is a supervisor power everywhere — at creation, at reassignment and here
+      // — and so an agent cannot share work sideways that they are barred from reassigning.
+      { action: 'Add/remove collaborator', gate: 'supervisorOnly', supervisor: true, assignee: false, collaborator: false, otherAgent: false },
       { action: 'Archive/restore', gate: 'ticketAccess', supervisor: true, assignee: true, collaborator: true, otherAgent: false },
       { action: 'Bulk reassign / bulk close', gate: 'supervisorOnly', supervisor: true, assignee: false, collaborator: false, otherAgent: false },
       // The brief restricts SLA ack to a ticket "assigned to them", which is stricter
