@@ -3,6 +3,7 @@ import { prisma } from '../../lib/prisma.js';
 import { authenticate, requireRole } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { ticketPayload } from './detail.js';
+import { validateReassignTarget } from './reassignRules.js';
 
 const router = Router();
 
@@ -52,17 +53,9 @@ router.post(
       return;
     }
 
-    const target = await prisma.user.findUnique({ where: { id: assigneeId } });
-    if (!target) {
-      res.status(400).json({ error: 'Unknown user' });
-      return;
-    }
-
-    const takingItOn = target.id === actor.userId;
-    if (target.role !== 'agent' && !takingItOn) {
-      res.status(400).json({
-        error: 'A ticket can only be assigned to an agent, or to yourself as an escalation',
-      });
+    const targetCheck = await validateReassignTarget(actor.userId, assigneeId);
+    if (!targetCheck.ok) {
+      res.status(400).json({ error: targetCheck.error });
       return;
     }
 
