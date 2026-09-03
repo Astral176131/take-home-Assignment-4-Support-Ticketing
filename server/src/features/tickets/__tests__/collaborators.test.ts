@@ -10,7 +10,10 @@ dotenv.config({ path: path.resolve(__dirname, '../../../../.env.test') });
 
 import { app } from '../../../app.js';
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
+// Capped small: this file's fixture writes are always awaited sequentially, and
+// every test file opens its own pool — left uncapped, running many files together
+// (as the full suite does) exhausts Postgres's connection limit.
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL!, max: 2 });
 const testPrisma = new PrismaClient({ adapter });
 const request = supertest(app);
 

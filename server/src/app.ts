@@ -3,6 +3,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { authRouter } from './features/auth/auth.routes.js';
 import { ticketsRouter } from './features/tickets/tickets.routes.js';
+import { exportRouter } from './features/tickets/export.routes.js';
 import { repliesRouter } from './features/tickets/replies.routes.js';
 import { statusRouter } from './features/tickets/status.routes.js';
 import { collaboratorsRouter } from './features/tickets/collaborators.routes.js';
@@ -22,6 +23,9 @@ app.use(cors({
 
 // Routes
 app.use('/api/auth', authRouter);
+// exportRouter is mounted before ticketsRouter: its literal path "/export.csv" would
+// otherwise be swallowed by ticketsRouter's GET /:id, which matches any single segment.
+app.use('/api/tickets', exportRouter);
 app.use('/api/tickets', ticketsRouter);
 app.use('/api/tickets', repliesRouter);
 app.use('/api/tickets', statusRouter);
