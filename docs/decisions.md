@@ -223,6 +223,28 @@ reconstructed afterwards. Each one had a real alternative.
 
 ---
 
+## 12. The alerts list is scoped like acknowledgement, not like the brief's literal wording
+
+- **Chose:** an agent's `GET /api/alerts` includes tickets they collaborate on, not only
+  ones they are the primary assignee for — the same scope `POST /:id/alerts/ack` uses.
+- **Rejected:** the brief's own wording for the list, "their assigned tickets," read
+  literally as assignee-only.
+- **Why:** the brief phrases the list more narrowly than it phrases acknowledgement
+  ("assigned to them," itself ambiguous, resolved in an earlier decision to include
+  collaborators). Keeping the list narrower than ack would produce a real absurdity: a
+  collaborator permitted to acknowledge an alert that never appears anywhere in their own
+  alerts list. The two only make sense as one scope — what you may act on is what you can
+  see needs acting on.
+
+  A second real-world constraint shaped acknowledgement itself: it is only valid against a
+  currently active alert (409 otherwise). Every mainstream alert-management tool
+  (PagerDuty, Opsgenie, and similar) ties acknowledgement to a concrete, firing instance —
+  there is no precedent anywhere for acknowledging a hypothetical future breach, and
+  `ack_cycle` already provides the real equivalent of "let me know if this happens again":
+  a fresh cycle, and therefore a fresh, un-silenced alert, on every reopen.
+
+---
+
 ## Bugs these decisions surfaced
 
 Worth recording, because each one was found by a test rather than in production:
@@ -237,3 +259,12 @@ Worth recording, because each one was found by a test rather than in production:
    parameter as `string | string[]`, and Phase 1's code assumed a string. Tests never
    caught it because Vitest transpiles without typechecking — and `npm run build` is
    exactly what Render will run at deploy time.
+4. **A blanket `router.use(requireRole('supervisor'))` in `bulk.routes.ts` gated every
+   route in every router mounted after it** at the same `/api/tickets` prefix, not just its
+   own two routes — Express runs a path-less `router.use()` for anything reaching that
+   prefix, regardless of which router's own route eventually matches. Invisible for two
+   commits because nothing was mounted after it yet; surfaced the moment `ack.routes.ts`
+   was added and every agent ack attempt failed with "Insufficient permissions," a message
+   that appears nowhere in `ack.routes.ts` itself. Fixed by scoping the role check to each
+   route individually, matching the convention every other supervisor-gated router already
+   used.

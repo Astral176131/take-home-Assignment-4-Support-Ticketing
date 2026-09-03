@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate } from '../../middleware/auth.js';
-import { computeSla } from '../tickets/sla.js';
+import { findInProgressTickets } from '../tickets/alertCandidates.js';
 import { API_STATUSES, STATUS_TO_API } from '../tickets/stateMachine.js';
 import { isoDate, lastNWeekStarts } from './weeks.js';
 
@@ -85,32 +85,10 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
   // tickets already got their response, so they are excluded here even though they may
   // still show breached: true if asked directly (that history is intentionally preserved
   // on the ticket itself; it just isn't what "currently breaching" means on a dashboard).
-  const inProgress = await prisma.ticket.findMany({
-    where: { archivedAt: null, status: { in: ['new_ticket', 'open', 'pending'] } },
-    select: {
-      status: true,
-      clockStartedAt: true,
-      pausedMinutes: true,
-      pendingSince: true,
-      ackCycle: true,
-      ackedThroughCycle: true,
-      priority: { select: { targetResponseMinutes: true } },
-    },
-  });
-  const breachingCount = inProgress.filter(
-    (t) =>
-      computeSla({
-        status: t.status,
-        clockStartedAt: t.clockStartedAt,
-        pausedMinutes: t.pausedMinutes,
-        pendingSince: t.pendingSince,
-        resolvedAt: null,
-        closedAt: null,
-        targetResponseMinutes: t.priority.targetResponseMinutes,
-        ackCycle: t.ackCycle,
-        ackedThroughCycle: t.ackedThroughCycle,
-      }).breached
-  ).length;
+  // `breached` is a plain fact about the ticket, independent of acknowledgement — a
+  // supervisor's count should not go quiet just because an agent silenced their own alert.
+  const inProgress = await findInProgressTickets();
+  const breachingCount = inProgress.filter((t) => t.sla.breached).length;
 
   res.json({
     open_count: byStatus.open,

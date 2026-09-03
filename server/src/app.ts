@@ -9,8 +9,10 @@ import { statusRouter } from './features/tickets/status.routes.js';
 import { collaboratorsRouter } from './features/tickets/collaborators.routes.js';
 import { reassignRouter } from './features/tickets/reassign.routes.js';
 import { bulkRouter } from './features/tickets/bulk.routes.js';
+import { ackRouter } from './features/tickets/ack.routes.js';
 import { agentsRouter } from './features/agents/agents.routes.js';
 import { dashboardRouter } from './features/dashboard/dashboard.routes.js';
+import { alertsRouter } from './features/alerts/alerts.routes.js';
 
 const app = express();
 
@@ -33,8 +35,10 @@ app.use('/api/tickets', statusRouter);
 app.use('/api/tickets', collaboratorsRouter);
 app.use('/api/tickets', reassignRouter);
 app.use('/api/tickets', bulkRouter);
+app.use('/api/tickets', ackRouter);
 app.use('/api/agents', agentsRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/alerts', alertsRouter);
 
 // Health check
 app.get('/api/health', (_req, res) => {

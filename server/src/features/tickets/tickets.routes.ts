@@ -49,13 +49,14 @@ async function findOrCreateRequester(name: string, email: string) {
 // --- Serializers -------------------------------------------------------------
 // Responses use snake_case to match the vocabulary the brief uses for its fields.
 
-const listInclude = {
+// Exported: alertCandidates.ts reuses both so the queue row shape isn't defined twice.
+export const listInclude = {
   requester: true,
   priority: true,
   assignee: { select: { id: true, name: true } },
 } satisfies Prisma.TicketInclude;
 
-function toListItem(ticket: Prisma.TicketGetPayload<{ include: typeof listInclude }>) {
+export function toListItem(ticket: Prisma.TicketGetPayload<{ include: typeof listInclude }>) {
   return {
     id: ticket.id,
     key: ticketKey(ticket.number),

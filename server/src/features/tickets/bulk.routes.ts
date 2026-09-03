@@ -8,7 +8,14 @@ import { checkTransition, STATUS_TO_API } from './stateMachine.js';
 const router = Router();
 
 router.use(authenticate);
-router.use(requireRole('supervisor'));
+
+// requireRole('supervisor') is applied per-route below, not here via router.use(). Several
+// routers share the '/api/tickets' mount prefix, and a path-less router.use() runs for
+// every request reaching that prefix — including ones this router has no matching route
+// for — regardless of which router is mounted next. A blanket requireRole('supervisor')
+// here previously 403'd every /api/tickets/* request from a non-supervisor that happened
+// to be handled by a router mounted after this one, with no route in this file involved at
+// all. Caught when ack.routes.ts, mounted after this file, started failing for agents.
 
 const MAX_BULK_IDS = 100;
 
@@ -65,7 +72,7 @@ function readTicketIds(req: Request, res: Response): string[] | null {
  * endpoint, which treats the identical case as a 409 — there, the caller named one ticket
  * and something aside from the ticket refused to move; here, nothing was asked to move.
  */
-router.post('/bulk-reassign', async (req: Request, res: Response): Promise<void> => {
+router.post('/bulk-reassign', requireRole('supervisor'), async (req: Request, res: Response): Promise<void> => {
   const actor = req.user!;
   const ids = readTicketIds(req, res);
   if (!ids) return;
@@ -129,7 +136,7 @@ router.post('/bulk-reassign', async (req: Request, res: Response): Promise<void>
  * open to closed") rather than a generic skip. Supervisor-only is the route's own gate;
  * closing itself needs no further per-ticket permission check.
  */
-router.post('/bulk-close', async (req: Request, res: Response): Promise<void> => {
+router.post('/bulk-close', requireRole('supervisor'), async (req: Request, res: Response): Promise<void> => {
   const actor = req.user!;
   const ids = readTicketIds(req, res);
   if (!ids) return;
