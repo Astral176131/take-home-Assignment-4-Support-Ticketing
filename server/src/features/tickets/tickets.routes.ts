@@ -5,6 +5,7 @@ import { authenticate, requireTicketAccess } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { STATUS_TO_API, ticketPayload } from './detail.js';
 import { computeSla } from './sla.js';
+import { ticketKey } from './key.js';
 
 const router = Router();
 
@@ -56,6 +57,7 @@ const listInclude = {
 function toListItem(ticket: Prisma.TicketGetPayload<{ include: typeof listInclude }>) {
   return {
     id: ticket.id,
+    key: ticketKey(ticket.number),
     subject: ticket.subject,
     status: STATUS_TO_API[ticket.status],
     priority_code: ticket.priorityCode,

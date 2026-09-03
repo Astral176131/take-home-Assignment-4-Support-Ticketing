@@ -2,6 +2,7 @@ import { EventType, Prisma, Role } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { STATUS_TO_API, allowedTransitions } from './stateMachine.js';
 import { computeSla } from './sla.js';
+import { ticketKey } from './key.js';
 
 export { STATUS_TO_API };
 
@@ -59,6 +60,7 @@ export function toTicketDetail(
       ackedThroughCycle: ticket.ackedThroughCycle,
     }),
     id: ticket.id,
+    key: ticketKey(ticket.number),
     subject: ticket.subject,
     description: ticket.description,
     status: STATUS_TO_API[ticket.status],

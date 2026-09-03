@@ -70,6 +70,8 @@ export interface Sla {
 
 export interface TicketListItem {
   id: string;
+  /** Human-readable label, e.g. "SUP-14". The id above remains the real identifier. */
+  key: string;
   subject: string;
   status: TicketStatus;
   priority_code: Priority;
@@ -84,6 +86,7 @@ export interface TicketListItem {
 
 export interface Ticket {
   id: string;
+  key: string;
   subject: string;
   description: string;
   status: TicketStatus;

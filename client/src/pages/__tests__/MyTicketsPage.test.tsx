@@ -20,6 +20,7 @@ vi.mock('../../context/AuthContext', () => ({
 function ticket(overrides: Partial<TicketListItem> = {}): TicketListItem {
   return {
     id: 't1',
+    key: 'SUP-1',
     subject: 'VPN drops every ten minutes',
     status: 'open',
     priority_code: 'normal',

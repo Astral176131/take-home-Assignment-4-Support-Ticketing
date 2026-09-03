@@ -90,6 +90,7 @@ export function TicketDetailPage() {
       <div className="ticket-layout">
         <main className="ticket-main">
           <div className="ticket-heading">
+            <span className="muted ticket-key">{ticket.key}</span>
             <h2>{ticket.subject}</h2>
             <StatusBadge status={ticket.status} />
             {ticket.archived_at && <span className="chip chip-archived">Archived</span>}

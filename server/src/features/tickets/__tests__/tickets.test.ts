@@ -109,6 +109,20 @@ describe('Ticket routes', () => {
       expect(res.body.collaborators.map((c: { id: string }) => c.id)).toContain(agentAId);
     });
 
+    it('gives every ticket a unique, human-readable key', async () => {
+      const first = await createTicket(agentACookie);
+      const second = await createTicket(agentACookie);
+
+      expect(first.body.key).toMatch(/^SUP-\d+$/);
+      expect(second.body.key).toMatch(/^SUP-\d+$/);
+      expect(second.body.key).not.toBe(first.body.key);
+
+      // Also present on the list, not only the single-ticket response.
+      const list = await request.get('/api/tickets').set('Cookie', agentACookie);
+      const listed = list.body.items.find((t: { id: string }) => t.id === first.body.id);
+      expect(listed.key).toBe(first.body.key);
+    });
+
     it('lets an agent self-assign and still records them as a collaborator', async () => {
       const res = await createTicket(agentACookie, { assignee_id: agentAId });
 

@@ -14,6 +14,7 @@ export function TicketTable({ tickets }: { tickets: TicketListItem[] }) {
       <table className="queue-table">
         <thead>
           <tr>
+            <th>Key</th>
             <th>Subject</th>
             <th>Status</th>
             <th>Priority</th>
@@ -27,6 +28,7 @@ export function TicketTable({ tickets }: { tickets: TicketListItem[] }) {
         <tbody>
           {tickets.map((ticket) => (
             <tr key={ticket.id} className={ticket.archived_at ? 'row-archived' : undefined}>
+              <td className="muted ticket-key">{ticket.key}</td>
               <td>
                 <Link className="ticket-link" to={`/tickets/${ticket.id}`}>
                   {ticket.subject}

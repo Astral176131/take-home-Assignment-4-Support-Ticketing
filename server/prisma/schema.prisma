@@ -97,6 +97,11 @@ model PriorityConfig {
 
 model Ticket {
   id              String       @id @default(uuid())
+  // A short, human-readable label ("SUP-14"), shown in the UI and CSV export. Not in the
+  // brief's schema — added because a UUID cannot be said aloud on a call or scanned in a
+  // spreadsheet. The uuid `id` above remains the real primary key everywhere; `number` is
+  // purely a display concern.
+  number          Int          @unique @default(autoincrement())
   subject         String
   description     String
   requesterId     String       @map("requester_id")

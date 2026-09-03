@@ -34,6 +34,7 @@ const bob = { id: 'u2', name: 'Bob' };
 function ticket(overrides: Partial<Ticket> = {}): Ticket {
   return {
     id: 't1',
+    key: 'SUP-1',
     subject: 'Printer will not print',
     description: 'It makes a noise and then stops.',
     status: 'open',

@@ -474,6 +474,8 @@ body {
 
 .ticket-link:hover { color: var(--accent-hover); text-decoration: underline; }
 
+.ticket-key { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 .table-total { margin-top: 0.75rem; }
 
 /* ===== Ticket detail ===== */
