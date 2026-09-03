@@ -115,7 +115,13 @@ export interface Ticket {
 export interface Paged<T> {
   items: T[];
   total: number;
+  /** Present on the queue list and export; absent on endpoints with no pagination. */
+  page?: number;
+  page_size?: number;
 }
+
+export type TicketSortField = 'created_at' | 'priority' | 'updated_at';
+export type SortDirection = 'asc' | 'desc';
 
 /** A ticket the same requester already has open, shown before filing a duplicate. */
 export interface DuplicateHit {

@@ -429,6 +429,100 @@ body {
   margin-left: 0.5rem;
 }
 
+/* ===== Filters bar ===== */
+.filters-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.filters-bar select {
+  padding: 0.45rem 0.6rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.filters-bar select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-muted); }
+
+.filter-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+  padding: 0.45rem 0.7rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.filter-search:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-muted); }
+
+/* ===== Sortable table headers ===== */
+.sort-header {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.sort-header:hover { color: var(--text-primary); }
+.sort-header.active { color: var(--accent-hover); }
+
+.select-col { width: 1%; padding-right: 0 !important; }
+.select-col input[type='checkbox'] { cursor: pointer; }
+
+/* ===== Bulk action bar ===== */
+.bulk-bar {
+  padding: 0.8rem 1rem;
+  margin-bottom: 1rem;
+  background: var(--accent-muted);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+}
+
+.bulk-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.bulk-bar-row select {
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+}
+
+.bulk-summary { margin-top: 0.6rem; font-size: 0.82rem; }
+.bulk-summary ul { margin-top: 0.3rem; padding-left: 1.1rem; color: var(--text-secondary); }
+
+/* ===== Pagination ===== */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
 /* ===== Queue table ===== */
 .table-wrap {
   overflow-x: auto;
