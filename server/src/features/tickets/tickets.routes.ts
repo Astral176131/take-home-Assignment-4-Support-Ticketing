@@ -6,6 +6,7 @@ import { writeEvent } from './events.js';
 import { STATUS_TO_API, ticketPayload } from './detail.js';
 import { computeSla } from './sla.js';
 import { ticketKey } from './key.js';
+import { buildTicketWhere, resolveTicketSort, resolvePagination } from './query.js';
 
 const router = Router();
 
@@ -244,34 +245,40 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 // --- List --------------------------------------------------------------------
 
 /**
- * Minimal queue list. Search, filters, sorting and pagination arrive in Phase 4; the
- * `{ items, total }` shape is already what Phase 4 will return, so that phase extends
- * this endpoint rather than reshaping it.
+ * The queue: search, filter, sort and paginate, entirely in the database. This route
+ * builds a query object and hands it to Prisma; Postgres does the matching, ordering and
+ * page slicing. Access scoping is folded into `buildTicketWhere` unconditionally, so no
+ * combination of query parameters can widen what an agent is allowed to see.
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const actor = req.user!;
-  const includeArchived = req.query.archived === 'true';
 
-  const where: Prisma.TicketWhereInput = {};
-
-  if (!includeArchived) {
-    where.archivedAt = null;
+  const where = buildTicketWhere(actor, req.query);
+  if (!where.ok) {
+    res.status(400).json({ error: where.error });
+    return;
   }
 
-  // Scoping happens in the query, not by fetching everything and filtering in Node.
-  if (actor.role === 'agent') {
-    where.OR = [
-      { assigneeId: actor.userId },
-      { collaborators: { some: { agentId: actor.userId } } },
-    ];
+  const orderBy = resolveTicketSort(req.query);
+  if (!orderBy.ok) {
+    res.status(400).json({ error: orderBy.error });
+    return;
   }
+
+  const { page, pageSize, skip } = resolvePagination(req.query);
 
   const [items, total] = await Promise.all([
-    prisma.ticket.findMany({ where, include: listInclude, orderBy: { createdAt: 'desc' } }),
-    prisma.ticket.count({ where }),
+    prisma.ticket.findMany({
+      where: where.value,
+      include: listInclude,
+      orderBy: orderBy.value,
+      skip,
+      take: pageSize,
+    }),
+    prisma.ticket.count({ where: where.value }),
   ]);
 
-  res.json({ items: items.map(toListItem), total });
+  res.json({ items: items.map(toListItem), total, page, page_size: pageSize });
 });
 
 /**

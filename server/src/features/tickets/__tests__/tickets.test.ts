@@ -206,7 +206,10 @@ describe('Ticket routes', () => {
       const mine = await createTicket(agentACookie, { assignee_id: agentAId });
       const theirs = await createTicket(agentBCookie, { assignee_id: agentBId });
 
-      const res = await request.get('/api/tickets').set('Cookie', agentACookie);
+      // page_size=100 so this stays correct regardless of how many other tickets this
+      // file's earlier tests have already attached to agent A — the default page size
+      // (25) would otherwise make `total` and `items.length` diverge as the file grows.
+      const res = await request.get('/api/tickets?page_size=100').set('Cookie', agentACookie);
       const ids = res.body.items.map((t: { id: string }) => t.id);
 
       expect(res.status).toBe(200);
@@ -233,6 +236,172 @@ describe('Ticket routes', () => {
 
       expect(def.body.items.map((t: { id: string }) => t.id)).not.toContain(created.body.id);
       expect(withArchived.body.items.map((t: { id: string }) => t.id)).toContain(created.body.id);
+    });
+
+    describe('search, filters, sort and pagination', () => {
+      // A term unlikely to appear in any other test's fixture data, so assertions can
+      // check what came back without needing to isolate the whole table.
+      const MARKER = 'zqxywobble';
+
+      it('matches a partial word, not just a whole one', async () => {
+        const created = await createTicket(supervisorCookie, {
+          subject: `Investigating ${MARKER}printer noise`,
+          assignee_id: agentAId,
+        });
+
+        // "zqxywobble" is a fragment inside "zqxywoBBLEprinter" — a real substring match,
+        // not a whole-word one full-text search would require.
+        const res = await request.get(`/api/tickets?q=${MARKER}`).set('Cookie', supervisorCookie);
+
+        expect(res.status).toBe(200);
+        expect(res.body.items.map((t: { id: string }) => t.id)).toContain(created.body.id);
+      });
+
+      it('matches the description as well as the subject', async () => {
+        const created = await createTicket(supervisorCookie, {
+          subject: 'Ordinary subject line',
+          description: `The customer mentioned ${MARKER} in their email.`,
+          assignee_id: agentAId,
+        });
+
+        const res = await request.get(`/api/tickets?q=${MARKER}`).set('Cookie', supervisorCookie);
+        expect(res.body.items.map((t: { id: string }) => t.id)).toContain(created.body.id);
+      });
+
+      it('is case-insensitive', async () => {
+        const created = await createTicket(supervisorCookie, {
+          subject: `Ticket about ${MARKER.toUpperCase()}`,
+          assignee_id: agentAId,
+        });
+
+        const res = await request.get(`/api/tickets?q=${MARKER}`).set('Cookie', supervisorCookie);
+        expect(res.body.items.map((t: { id: string }) => t.id)).toContain(created.body.id);
+      });
+
+      it('ANDs filters together rather than ORing them', async () => {
+        const marker = `${MARKER}filter`;
+        const matches = await createTicket(supervisorCookie, {
+          subject: marker,
+          priority_code: 'high',
+          category: 'billing',
+          assignee_id: agentAId,
+        });
+        const wrongPriority = await createTicket(supervisorCookie, {
+          subject: marker,
+          priority_code: 'low',
+          category: 'billing',
+          assignee_id: agentAId,
+        });
+        const wrongCategory = await createTicket(supervisorCookie, {
+          subject: marker,
+          priority_code: 'high',
+          category: 'bug',
+          assignee_id: agentAId,
+        });
+
+        const res = await request
+          .get(`/api/tickets?q=${marker}&priority=high&category=billing`)
+          .set('Cookie', supervisorCookie);
+        const ids = res.body.items.map((t: { id: string }) => t.id);
+
+        expect(ids).toContain(matches.body.id);
+        expect(ids).not.toContain(wrongPriority.body.id);
+        expect(ids).not.toContain(wrongCategory.body.id);
+      });
+
+      it('filters by assignee_id', async () => {
+        const marker = `${MARKER}assignee`;
+        const forA = await createTicket(supervisorCookie, {
+          subject: marker,
+          assignee_id: agentAId,
+        });
+        const forB = await createTicket(supervisorCookie, {
+          subject: marker,
+          assignee_id: agentBId,
+        });
+
+        const res = await request
+          .get(`/api/tickets?q=${marker}&assignee_id=${agentAId}`)
+          .set('Cookie', supervisorCookie);
+        const ids = res.body.items.map((t: { id: string }) => t.id);
+
+        expect(ids).toContain(forA.body.id);
+        expect(ids).not.toContain(forB.body.id);
+      });
+
+      it('rejects an unrecognised status, priority or category filter with 400', async () => {
+        const status = await request.get('/api/tickets?status=archived').set('Cookie', supervisorCookie);
+        const priority = await request.get('/api/tickets?priority=critical').set('Cookie', supervisorCookie);
+        const category = await request.get('/api/tickets?category=hardware').set('Cookie', supervisorCookie);
+
+        expect(status.status).toBe(400);
+        expect(priority.status).toBe(400);
+        expect(category.status).toBe(400);
+      });
+
+      it('sorts by priority using sort_order, not the enum alphabetically', async () => {
+        const marker = `${MARKER}sort`;
+        const low = await createTicket(supervisorCookie, {
+          subject: marker,
+          priority_code: 'low',
+          assignee_id: agentAId,
+        });
+        const urgent = await createTicket(supervisorCookie, {
+          subject: marker,
+          priority_code: 'urgent',
+          assignee_id: agentAId,
+        });
+
+        const res = await request
+          .get(`/api/tickets?q=${marker}&sort=priority&dir=desc`)
+          .set('Cookie', supervisorCookie);
+        const ids = res.body.items.map((t: { id: string }) => t.id);
+
+        // Urgent (sort_order 4) must come before low (sort_order 1) — alphabetically it
+        // would be the reverse.
+        expect(ids.indexOf(urgent.body.id)).toBeLessThan(ids.indexOf(low.body.id));
+      });
+
+      it('rejects an unrecognised sort field or direction with 400', async () => {
+        const field = await request.get('/api/tickets?sort=subject').set('Cookie', supervisorCookie);
+        const dir = await request.get('/api/tickets?sort=created_at&dir=sideways').set('Cookie', supervisorCookie);
+
+        expect(field.status).toBe(400);
+        expect(dir.status).toBe(400);
+      });
+
+      it('paginates so total matches the filtered count, and pages are disjoint', async () => {
+        const marker = `${MARKER}page`;
+        const created = await Promise.all(
+          [1, 2, 3].map(() => createTicket(supervisorCookie, { subject: marker, assignee_id: agentAId }))
+        );
+        const expectedIds = created.map((c) => c.body.id).sort();
+
+        const first = await request
+          .get(`/api/tickets?q=${marker}&page=1&page_size=2&sort=created_at&dir=asc`)
+          .set('Cookie', supervisorCookie);
+        const second = await request
+          .get(`/api/tickets?q=${marker}&page=2&page_size=2&sort=created_at&dir=asc`)
+          .set('Cookie', supervisorCookie);
+
+        expect(first.body.total).toBe(3);
+        expect(second.body.total).toBe(3);
+        expect(first.body.items).toHaveLength(2);
+        expect(second.body.items).toHaveLength(1);
+        expect(first.body.page_size).toBe(2);
+
+        const combined = [...first.body.items, ...second.body.items]
+          .map((t: { id: string }) => t.id)
+          .sort();
+        expect(combined).toEqual(expectedIds);
+      });
+
+      it('clamps a page_size above the server maximum instead of rejecting it', async () => {
+        const res = await request.get('/api/tickets?page_size=99999').set('Cookie', supervisorCookie);
+
+        expect(res.status).toBe(200);
+        expect(res.body.page_size).toBe(100);
+      });
     });
   });
 
