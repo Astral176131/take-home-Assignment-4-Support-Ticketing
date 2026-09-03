@@ -235,6 +235,40 @@ describe('TicketDetailPage', () => {
     expect(screen.queryByRole('button', { name: 'Add reply' })).not.toBeInTheDocument();
   });
 
+  describe('acknowledging an alert', () => {
+    it('shows no Acknowledge button when there is no active alert', async () => {
+      get.mockResolvedValue(ticket()); // sla.alert_active: false by default
+      renderPage();
+
+      await screen.findByText('Printer will not print');
+      expect(screen.queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument();
+    });
+
+    it('shows Acknowledge when there is an active alert, and posts to ack on click', async () => {
+      const breaching = ticket({
+        sla: {
+          elapsed_minutes: 300,
+          target_minutes: 240,
+          remaining_minutes: -60,
+          breached: true,
+          warning: false,
+          alert_active: true,
+        },
+      });
+      get.mockResolvedValue(breaching);
+      post.mockResolvedValue(ticket({ sla: { ...breaching.sla, breached: true, alert_active: false } }));
+      const user = userEvent.setup();
+      renderPage();
+
+      const button = await screen.findByRole('button', { name: 'Acknowledge' });
+      await user.click(button);
+
+      expect(post).toHaveBeenCalledWith('/api/tickets/t1/alerts/ack', undefined);
+      // Re-rendered from the response: the alert is gone, so is the button.
+      expect(screen.queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument();
+    });
+  });
+
   describe('people controls', () => {
     /** The first call loads the ticket; TicketPeople then asks for the agent roster. */
     function mockSupervisorView(t = ticket()) {

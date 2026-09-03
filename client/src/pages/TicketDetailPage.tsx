@@ -66,6 +66,8 @@ export function TicketDetailPage() {
   const removeCollaborator = (agentId: string) =>
     act(() => api.del<Ticket>(`/api/tickets/${id}/collaborators/${agentId}`));
 
+  const acknowledge = () => act(() => api.post<Ticket>(`/api/tickets/${id}/alerts/ack`));
+
   if (loading) return <p className="muted">Loading…</p>;
 
   if (!ticket) {
@@ -132,8 +134,13 @@ export function TicketDetailPage() {
             <dd>{categoryLabel(ticket.category)}</dd>
 
             <dt>Response</dt>
-            <dd>
+            <dd className="response-field">
               <SlaBadge sla={ticket.sla} />
+              {ticket.sla.alert_active && (
+                <button className="btn ack-btn" disabled={busy} onClick={acknowledge}>
+                  Acknowledge
+                </button>
+              )}
             </dd>
 
             <dt>Collaborators</dt>

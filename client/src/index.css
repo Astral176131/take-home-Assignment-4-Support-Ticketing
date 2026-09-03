@@ -220,6 +220,18 @@ body {
   font-weight: 500;
 }
 
+.nav-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.45rem;
+  background: var(--error);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
 .sidebar-footer {
   padding: 1rem 1.5rem;
   border-top: 1px solid var(--border-color);
@@ -760,6 +772,17 @@ body {
 
 .status-actions { display: flex; flex-direction: column; gap: 0.5rem; }
 .archive-btn { width: 100%; margin-top: 0.5rem; }
+
+.response-field { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+
+.ack-btn {
+  border-color: var(--warning);
+  color: var(--warning);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+}
+
+.ack-btn:hover:not(:disabled) { background: rgba(245, 158, 11, 0.12); }
 
 /* ===== Ticket form ===== */
 .ticket-form {

@@ -8,6 +8,7 @@ import { QueuePage } from './pages/QueuePage';
 import { TicketDetailPage } from './pages/TicketDetailPage';
 import { NewTicketPage } from './pages/NewTicketPage';
 import { MyTicketsPage } from './pages/MyTicketsPage';
+import { AlertsPage } from './pages/AlertsPage';
 
 function App() {
   return (
@@ -27,6 +28,7 @@ function App() {
             <Route path="tickets" element={<QueuePage />} />
             {/* A separate path, not /tickets/mine, which would match the :id route. */}
             <Route path="my-tickets" element={<MyTicketsPage />} />
+            <Route path="alerts" element={<AlertsPage />} />
             {/* Declared before the :id route so "new" isn't read as a ticket id. */}
             <Route path="tickets/new" element={<NewTicketPage />} />
             <Route path="tickets/:id" element={<TicketDetailPage />} />
