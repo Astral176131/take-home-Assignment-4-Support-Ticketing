@@ -17,6 +17,17 @@ export type EventType =
   | 'reply_added'
   | 'sla_ack';
 
+/** GET /api/dashboard — one shared dashboard, not scoped by role. */
+export interface Dashboard {
+  open_count: number;
+  pending_count: number;
+  resolved_this_week: number;
+  breaching_count: number;
+  by_status: Record<TicketStatus, number>;
+  by_agent: { agent: Person; count: number }[];
+  resolved_per_week: { week_start: string; count: number }[];
+}
+
 export interface User {
   id: string;
   email: string;
