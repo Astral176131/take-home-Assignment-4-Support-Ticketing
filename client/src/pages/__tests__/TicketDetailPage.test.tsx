@@ -203,6 +203,22 @@ describe('TicketDetailPage', () => {
     });
   });
 
+  it('clears the reply box on success but keeps what was typed if the post fails', async () => {
+    get.mockResolvedValue(ticket());
+    const { ApiError } = await import('../../lib/api');
+    post.mockRejectedValue(new ApiError(500, 'Internal server error'));
+    const user = userEvent.setup();
+    renderPage();
+
+    const box = await screen.findByLabelText('Reply');
+    await user.type(box, 'A reply worth not losing');
+    await user.click(screen.getByRole('button', { name: 'Add reply' }));
+
+    await screen.findByText('Internal server error');
+    // Lost work is worse than an error banner — the draft must still be there.
+    expect(box).toHaveValue('A reply worth not losing');
+  });
+
   it('rules out marking a customer email as internal', async () => {
     get.mockResolvedValue(ticket());
     const user = userEvent.setup();

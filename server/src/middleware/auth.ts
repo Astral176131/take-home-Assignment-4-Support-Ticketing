@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { Role } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { getJwtSecret } from '../lib/jwt.js';
 
 // Extend Express Request to include user info
 declare global {
@@ -14,14 +15,6 @@ declare global {
       };
     }
   }
-}
-
-function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error('JWT_SECRET environment variable is required');
-  }
-  return secret;
 }
 
 /**

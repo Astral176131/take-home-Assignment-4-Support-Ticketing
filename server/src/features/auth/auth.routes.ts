@@ -3,10 +3,10 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate } from '../../middleware/auth.js';
+import { cookieOptions, getJwtSecret } from '../../lib/jwt.js';
 
 const router = Router();
 
-const JWT_SECRET = process.env.JWT_SECRET!;
 const JWT_TTL = '1h'; // 1 hour
 const COOKIE_MAX_AGE = 3600000; // 1 hour in milliseconds
 
@@ -43,18 +43,12 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     // Create JWT
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
-      JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: JWT_TTL }
     );
 
     // Set httpOnly cookie
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: COOKIE_MAX_AGE,
-      path: '/',
-    });
+    res.cookie('token', token, { ...cookieOptions(), maxAge: COOKIE_MAX_AGE });
 
     // Return user info (no password hash)
     res.json({
@@ -76,12 +70,9 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
  * Clears the auth cookie.
  */
 router.post('/logout', (_req: Request, res: Response): void => {
-  res.clearCookie('token', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-  });
+  // clearCookie only matches a cookie whose attributes are identical to the one that set
+  // it — reusing the same cookieOptions() is what makes this actually clear it.
+  res.clearCookie('token', cookieOptions());
 
   res.json({ message: 'Logged out successfully' });
 });

@@ -2,7 +2,14 @@ import { useState } from 'react';
 
 interface Props {
   busy: boolean;
-  onSubmit: (reply: { body: string; is_internal: boolean; author_type: 'agent' | 'customer' }) => Promise<void>;
+  // Reports whether the reply actually went through, so a failed submit can leave what
+  // was typed in place instead of discarding it — losing a long reply to a transient
+  // error is worse than making the agent clear the box themselves.
+  onSubmit: (reply: {
+    body: string;
+    is_internal: boolean;
+    author_type: 'agent' | 'customer';
+  }) => Promise<boolean>;
 }
 
 export function ReplyForm({ busy, onSubmit }: Props) {
@@ -14,15 +21,17 @@ export function ReplyForm({ busy, onSubmit }: Props) {
     e.preventDefault();
     if (!body.trim()) return;
 
-    await onSubmit({
+    const succeeded = await onSubmit({
       body,
       is_internal: isInternal,
       author_type: fromCustomer ? 'customer' : 'agent',
     });
 
-    setBody('');
-    setIsInternal(false);
-    setFromCustomer(false);
+    if (succeeded) {
+      setBody('');
+      setIsInternal(false);
+      setFromCustomer(false);
+    }
   }
 
   return (

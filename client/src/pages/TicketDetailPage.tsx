@@ -35,14 +35,21 @@ export function TicketDetailPage() {
    * Every action returns the updated ticket, so the page re-renders from the server's
    * view rather than guessing what changed — which is what keeps the action buttons
    * honest after a status move.
+   *
+   * Returns whether the call actually succeeded, rather than swallowing the failure
+   * silently — ReplyForm relies on this to decide whether to clear what was typed. Without
+   * it, `act` always resolves normally (it catches internally to show `error`), so a
+   * caller awaiting it can't otherwise tell success from failure.
    */
-  async function act(run: () => Promise<Ticket>) {
+  async function act(run: () => Promise<Ticket>): Promise<boolean> {
     setBusy(true);
     setError('');
     try {
       setTicket(await run());
+      return true;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'That did not work');
+      return false;
     } finally {
       setBusy(false);
     }
