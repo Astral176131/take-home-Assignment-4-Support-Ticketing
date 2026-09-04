@@ -273,6 +273,31 @@ reconstructed afterwards. Each one had a real alternative.
 
 ---
 
+## 14. The seed script drives tickets through the real API, not direct Prisma writes
+
+- **Chose:** `prisma/seed.ts` runs the app in-process (the same `supertest(app)` pattern
+  the test suite uses, no server actually listening) and creates every demo ticket by
+  genuinely calling `POST /api/tickets`, moving it through statuses via the real status
+  endpoint, adding real replies and collaborators, and so on. A short, contained raw-Prisma
+  pass afterward backdates timestamps only — something the API has no way to do — never the
+  rules themselves.
+- **Rejected:** writing ticket rows and their history directly via Prisma, the more
+  conventional shape for a seed script.
+- **Why:** every rule the app enforces would otherwise need a second, hand-written copy
+  inside the seed script — which transitions are legal, which event gets written on which
+  action, the reopen-window math, the pending-clock pause. That is exactly the kind of
+  drift this build has avoided everywhere else, and a seed script with its own slightly-off
+  state machine is a classic way to produce demo tickets in states the real app could never
+  reach. Driving it through the real routes means every seeded ticket is provably reachable
+  by an actual user of the app, at the cost of the script taking a few minutes to run
+  against remote Supabase rather than seconds.
+
+  The script also clears its own previous output before reseeding (every demo ticket's
+  requester lives under a reserved domain, used to find them again), making it safe to run
+  more than once rather than accumulating duplicates on every re-run.
+
+---
+
 ## Bugs these decisions surfaced
 
 Worth recording, because each one was found by a test rather than in production:
@@ -296,3 +321,22 @@ Worth recording, because each one was found by a test rather than in production:
    that appears nowhere in `ack.routes.ts` itself. Fixed by scoping the role check to each
    route individually, matching the convention every other supervisor-gated router already
    used.
+5. **`npx prisma db seed` had never actually worked.** Prisma 7 moved the seed command from
+   `package.json`'s `prisma.seed` field (the pre-7 convention, still present but ignored) to
+   `migrations.seed` in `prisma.config.ts`, and that migration was never done — the
+   documented, standard command silently did nothing. Found by running it directly rather
+   than assuming the existing configuration was current.
+6. **A flat 3-hour SLA backdate did not breach every priority.** `high`'s 240-minute target
+   is 4 hours; 3 hours left seeded "breaching" tickets at that priority not actually
+   breaching, confirmed by querying the seeded rows directly rather than trusting the script
+   ran without error. Fixed by backdating past each ticket's own priority target instead of
+   a fixed amount.
+7. **Interpolating every ticket's history out to "now" defeated the seed data's own 8-week
+   spread.** `created_at` was correctly spread across 8 weeks, but `resolved_at` — derived
+   by interpolating a ticket's events between its `created_at` and the present moment —
+   collapsed into the 2-3 most recent weeks regardless, because that interpolation always
+   lands roughly halfway between creation and today, which pulls toward the present harder
+   for an older ticket than for a recent one. Fixed by interpolating within a short, fixed
+   activity window after creation instead — realistic on its own terms (real support
+   activity happens within days of a ticket opening, not spread across its entire age), and
+   incidentally what keeps `resolved_at`'s week close to `created_at`'s.

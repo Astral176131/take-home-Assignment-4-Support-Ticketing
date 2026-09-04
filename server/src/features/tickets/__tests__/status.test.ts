@@ -9,7 +9,7 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../../../.env.test') });
 
 import { app } from '../../../app.js';
-import { purgeTicketEvents } from '../../../test/purgeTicketEvents.js';
+import { purgeTicketEvents } from '../../../lib/purgeTicketEvents.js';
 import { REOPEN_WINDOW_DAYS } from '../../../lib/config.js';
 
 // Capped small: this file's fixture writes are always awaited sequentially, and

@@ -9,7 +9,7 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../../../.env.test') });
 
 import { app } from '../../../app.js';
-import { purgeTicketEvents } from '../../../test/purgeTicketEvents.js';
+import { purgeTicketEvents } from '../../../lib/purgeTicketEvents.js';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL!, max: 2 });
 const testPrisma = new PrismaClient({ adapter });
