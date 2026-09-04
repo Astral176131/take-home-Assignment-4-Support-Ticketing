@@ -9,6 +9,7 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../.env.test') });
 
 import { app } from '../app.js';
+import { purgeTicketEvents } from '../test/purgeTicketEvents.js';
 
 /**
  * The hostile-grader pass.
@@ -266,7 +267,7 @@ describe('Authorization: the disallowed actor is refused on every route', () => 
     // written between collecting the ids and deleting them cannot survive the sweep.
     const ours = { ticket: { requester: { email: { startsWith: 'authz-test-' } } } };
 
-    await testPrisma.ticketEvent.deleteMany({ where: ours });
+    await purgeTicketEvents(testPrisma, ours);
     await testPrisma.reply.deleteMany({ where: ours });
     await testPrisma.ticketCollaborator.deleteMany({ where: ours });
     await testPrisma.ticket.deleteMany({

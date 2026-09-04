@@ -9,6 +9,7 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../../../.env.test') });
 
 import { app } from '../../../app.js';
+import { purgeTicketEvents } from '../../../test/purgeTicketEvents.js';
 import { startOfWeekUtc, isoDate } from '../weeks.js';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL!, max: 2 });
@@ -108,7 +109,7 @@ describe('GET /api/dashboard', () => {
     });
     const ids = tickets.map((t) => t.id);
 
-    await testPrisma.ticketEvent.deleteMany({ where: { ticketId: { in: ids } } });
+    await purgeTicketEvents(testPrisma, { ticketId: { in: ids } });
     await testPrisma.reply.deleteMany({ where: { ticketId: { in: ids } } });
     await testPrisma.ticketCollaborator.deleteMany({ where: { ticketId: { in: ids } } });
     await testPrisma.ticket.deleteMany({ where: { id: { in: ids } } });

@@ -9,6 +9,7 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../../../.env.test') });
 
 import { app } from '../../../app.js';
+import { purgeTicketEvents } from '../../../test/purgeTicketEvents.js';
 
 // Capped small: this file's fixture writes are always awaited sequentially, and
 // every test file opens its own pool — left uncapped, running many files together
@@ -124,7 +125,7 @@ describe('GET /api/tickets/export.csv', () => {
     });
     const ids = tickets.map((t) => t.id);
 
-    await testPrisma.ticketEvent.deleteMany({ where: { ticketId: { in: ids } } });
+    await purgeTicketEvents(testPrisma, { ticketId: { in: ids } });
     await testPrisma.reply.deleteMany({ where: { ticketId: { in: ids } } });
     await testPrisma.ticketCollaborator.deleteMany({ where: { ticketId: { in: ids } } });
     await testPrisma.ticket.deleteMany({ where: { id: { in: ids } } });

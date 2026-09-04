@@ -245,6 +245,34 @@ reconstructed afterwards. Each one had a real alternative.
 
 ---
 
+## 13. `ticket_events` immutability enforced by a trigger, not a `GRANT`/`REVOKE`
+
+- **Chose:** a `BEFORE UPDATE OR DELETE` trigger on `ticket_events` that unconditionally
+  raises an exception, so no writer — including the application's own database role — can
+  mutate a row once written.
+- **Rejected:** the build prompt's own suggestion of revoking `UPDATE`/`DELETE` grants on
+  the table.
+- **Why:** checked before building, rather than assumed — the role the app connects as
+  **owns** `ticket_events` on both databases (`current_user = tableowner`, confirmed by
+  query). A table owner's privileges are inherent in Postgres and survive an explicit
+  `REVOKE`, since revoking can only remove a privilege that was separately `GRANT`ed, never
+  the ownership privilege itself. A plain `REVOKE` here would have been a silent no-op —
+  the defense-in-depth point the brief is explicitly asking for would not have existed. A
+  trigger has no such exception; it fires for any writer regardless of privilege level.
+
+  This did have a real cost: the trigger also blocks the test suite's own cleanup, since
+  tests use the same database role the app does, and `ticket_events.ticket_id`'s foreign
+  key meant blocked event deletion would have cascaded into blocking ticket, requester and
+  user cleanup too, everywhere. Fixed with one shared test helper
+  (`purgeTicketEvents`) that disables the trigger, deletes, and re-enables it inside a
+  single transaction — using table-owner-level `ALTER TABLE`, which is a different, higher
+  bar than the ordinary Prisma queries every application route uses. The trigger still
+  fully blocks the threat the brief actually names — a bug in normal application code
+  issuing an accidental `UPDATE`/`DELETE` — since nothing in the app's own code path ever
+  issues `ALTER TABLE`; only this test helper does.
+
+---
+
 ## Bugs these decisions surfaced
 
 Worth recording, because each one was found by a test rather than in production:
