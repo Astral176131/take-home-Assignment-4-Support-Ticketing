@@ -8,7 +8,7 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, sessionExpired } = useAuth();
   const navigate = useNavigate();
 
   usePageMeta(
@@ -40,6 +40,15 @@ export function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="login-form">
+          {/* Being returned here without asking to leave needs explaining, or it reads
+              as the app having lost the last thing you did for no reason. */}
+          {sessionExpired && !error && (
+            <div className="error-message" role="status">
+              Your session ended, so you were signed out. Sign in again to pick up where you
+              left off.
+            </div>
+          )}
+
           {error && (
             <div className="error-message" role="alert">
               {error}
