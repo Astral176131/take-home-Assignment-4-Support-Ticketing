@@ -58,6 +58,7 @@ export function toTicketDetail(
       targetResponseMinutes: ticket.priority.targetResponseMinutes,
       ackCycle: ticket.ackCycle,
       ackedThroughCycle: ticket.ackedThroughCycle,
+      ackedAt: ticket.ackedAt,
     }),
     id: ticket.id,
     key: ticketKey(ticket.number),

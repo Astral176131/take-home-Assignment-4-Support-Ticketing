@@ -2,8 +2,16 @@
 
 /** "2h ago", "3d ago" — enough precision for a support queue, no date library needed. */
 export function timeAgo(iso: string, now: Date = new Date()): string {
-  const seconds = Math.round((now.getTime() - new Date(iso).getTime()) / 1000);
+  const then = new Date(iso);
+  // An unparseable timestamp otherwise renders the literal text "Invalid Date" into the
+  // page, which reads as a broken record rather than as missing information.
+  if (Number.isNaN(then.getTime())) return 'unknown';
 
+  const seconds = Math.round((now.getTime() - then.getTime()) / 1000);
+
+  // A timestamp in the future is clock skew between the browser and the server, not
+  // something the reader can act on — "just now" is the honest rendering, and saying
+  // "-3m ago" would not be.
   if (seconds < 60) return 'just now';
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;

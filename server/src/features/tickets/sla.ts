@@ -1,5 +1,5 @@
 import { TicketStatus } from '@prisma/client';
-import { WARNING_WINDOW_MINUTES } from '../../lib/config.js';
+import { ACK_SNOOZE_MINUTES, WARNING_WINDOW_MINUTES } from '../../lib/config.js';
 
 export interface SlaInput {
   status: TicketStatus;
@@ -11,6 +11,7 @@ export interface SlaInput {
   targetResponseMinutes: number;
   ackCycle: number;
   ackedThroughCycle: number | null;
+  ackedAt: Date | null;
 }
 
 export interface SlaResult {
@@ -20,6 +21,8 @@ export interface SlaResult {
   breached: boolean;
   warning: boolean;
   alert_active: boolean;
+  /** Minutes until an acknowledged alert comes back, or null if it is not snoozed. */
+  snoozed_for_minutes: number | null;
 }
 
 /**
@@ -41,11 +44,17 @@ function clockReadsAt(t: SlaInput, now: Date): Date {
 /**
  * Where a ticket stands against the response time its priority promises.
  *
- * `alert_active` is the piece worth reading twice: an acknowledgement only silences the
- * cycle it was made in. Reopening a closed ticket increments `ack_cycle`, which leaves
- * `acked_through_cycle` behind and lets the alert fire again. A ticket that has never
- * been acknowledged has a null `acked_through_cycle`, treated as -1 so that it counts as
- * unacknowledged against cycle 0.
+ * `alert_active` is the piece worth reading twice. An acknowledgement silences an alert
+ * two ways, and both have to hold for it to stay quiet:
+ *
+ *   - it must be for the current cycle. Reopening a closed ticket increments `ack_cycle`,
+ *     which leaves `acked_through_cycle` behind and lets the alert fire again. A ticket
+ *     never acknowledged has a null `acked_through_cycle`, treated as -1 so it counts as
+ *     unacknowledged against cycle 0.
+ *   - it must be recent. The acknowledgement expires after ACK_SNOOZE_MINUTES, so a
+ *     ticket acknowledged and then left alone comes back rather than staying silent for
+ *     the rest of its life. A null `acked_at` is an acknowledgement made before that
+ *     column existed, which reads as already expired.
  */
 export function computeSla(t: SlaInput, now: Date = new Date()): SlaResult {
   const readsAt = clockReadsAt(t, now);
@@ -55,7 +64,17 @@ export function computeSla(t: SlaInput, now: Date = new Date()): SlaResult {
   const breached = elapsed > t.targetResponseMinutes;
   const remaining = t.targetResponseMinutes - elapsed;
   const warning = !breached && remaining < WARNING_WINDOW_MINUTES;
-  const acknowledged = (t.ackedThroughCycle ?? -1) >= t.ackCycle;
+  const ackedThisCycle = (t.ackedThroughCycle ?? -1) >= t.ackCycle;
+
+  // Measured from `now`, not from the frozen clock: the snooze is about how long ago a
+  // person looked at this, which keeps running while the ticket waits on the customer.
+  const snoozeAgeMinutes = t.ackedAt
+    ? Math.max(0, Math.round((now.getTime() - t.ackedAt.getTime()) / 60_000))
+    : null;
+  const snoozeLeft =
+    ackedThisCycle && snoozeAgeMinutes !== null && snoozeAgeMinutes < ACK_SNOOZE_MINUTES
+      ? ACK_SNOOZE_MINUTES - snoozeAgeMinutes
+      : null;
 
   return {
     elapsed_minutes: elapsed,
@@ -63,6 +82,7 @@ export function computeSla(t: SlaInput, now: Date = new Date()): SlaResult {
     remaining_minutes: remaining,
     breached,
     warning,
-    alert_active: (breached || warning) && !acknowledged,
+    alert_active: (breached || warning) && snoozeLeft === null,
+    snoozed_for_minutes: (breached || warning) ? snoozeLeft : null,
   };
 }

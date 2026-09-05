@@ -5,6 +5,7 @@ import { authenticate, requireTicketAccess } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { pauseCreditMinutes } from './clock.js';
 import { ticketPayload } from './detail.js';
+import { ConcurrentChange, guardedUpdate, isConcurrentChange } from './concurrency.js';
 import {
   API_STATUSES,
   API_TO_STATUS,
@@ -64,7 +65,7 @@ router.post(
     }
 
     const now = new Date();
-    const data: Prisma.TicketUpdateInput = { status: API_TO_STATUS[target] };
+    const data: Prisma.TicketUpdateManyMutationInput = { status: API_TO_STATUS[target] };
 
     if (target === 'pending') {
       data.pendingSince = now;
@@ -95,16 +96,34 @@ router.post(
       data.pausedMinutes = 0;
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.ticket.update({ where: { id: ticket.id }, data });
-      await writeEvent(tx, {
-        ticketId: ticket.id,
-        eventType: 'status_change',
-        actorId: actor.userId,
-        oldValue: STATUS_TO_API[ticket.status],
-        newValue: target,
+    try {
+      await prisma.$transaction(async (tx) => {
+        // The state machine ruled on the ticket as it was read above. Re-stating that
+        // reading as the update's own condition is what makes the ruling hold: two
+        // simultaneous requests both saw `open`, and only the one that still finds `open`
+        // when it takes the row lock is allowed to write — and therefore to write history.
+        const won = await guardedUpdate(
+          tx,
+          { id: ticket.id, status: ticket.status, archivedAt: null },
+          data
+        );
+        if (!won) throw new ConcurrentChange();
+
+        await writeEvent(tx, {
+          ticketId: ticket.id,
+          eventType: 'status_change',
+          actorId: actor.userId,
+          oldValue: STATUS_TO_API[ticket.status],
+          newValue: target,
+        });
       });
-    });
+    } catch (err) {
+      if (isConcurrentChange(err)) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
 
     res.json((await ticketPayload(ticket.id, actor.role))!);
   }

@@ -4,6 +4,7 @@ import { authenticate, requireRole } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { ticketPayload } from './detail.js';
 import { validateReassignTarget } from './reassignRules.js';
+import { ConcurrentChange, guardedUpdate, isConcurrentChange } from './concurrency.js';
 
 const router = Router();
 
@@ -59,17 +60,34 @@ router.post(
       return;
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.ticket.update({ where: { id: ticket.id }, data: { assigneeId } });
-      await writeEvent(tx, {
-        ticketId: ticket.id,
-        eventType: 'reassignment',
-        actorId: actor.userId,
-        // Both ends recorded: who held it, and who holds it now.
-        oldValue: ticket.assigneeId,
-        newValue: assigneeId,
+    // Conditional on the ticket still being held by whoever the event is about to name as
+    // the previous assignee — otherwise two simultaneous reassignments each record a
+    // handoff from the same person, and the timeline claims a move that never happened.
+    try {
+      await prisma.$transaction(async (tx) => {
+        const won = await guardedUpdate(
+          tx,
+          { id: ticket.id, assigneeId: ticket.assigneeId, archivedAt: null },
+          { assigneeId }
+        );
+        if (!won) throw new ConcurrentChange();
+
+        await writeEvent(tx, {
+          ticketId: ticket.id,
+          eventType: 'reassignment',
+          actorId: actor.userId,
+          // Both ends recorded: who held it, and who holds it now.
+          oldValue: ticket.assigneeId,
+          newValue: assigneeId,
+        });
       });
-    });
+    } catch (err) {
+      if (isConcurrentChange(err)) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
 
     res.json((await ticketPayload(ticket.id, actor.role))!);
   }

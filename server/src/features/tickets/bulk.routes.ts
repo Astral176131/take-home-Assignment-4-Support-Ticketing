@@ -1,9 +1,12 @@
 import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate, requireRole } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { validateReassignTarget } from './reassignRules.js';
+import { validateCollaboratorTarget } from './collaboratorRules.js';
 import { checkTransition, STATUS_TO_API } from './stateMachine.js';
+import { ConcurrentChange, guardedUpdate, isConcurrentChange } from './concurrency.js';
 
 const router = Router();
 
@@ -111,8 +114,18 @@ router.post('/bulk-reassign', requireRole('supervisor'), async (req: Request, re
       continue;
     }
 
+    // Guarded on the holder this batch read, so a ticket someone reassigned while the batch
+    // was running is reported rather than silently overwritten with a history row naming
+    // the wrong previous assignee.
+    let won = false;
     await prisma.$transaction(async (tx) => {
-      await tx.ticket.update({ where: { id: ticket.id }, data: { assigneeId } });
+      won = await guardedUpdate(
+        tx,
+        { id: ticket.id, assigneeId: ticket.assigneeId, archivedAt: null },
+        { assigneeId }
+      );
+      if (!won) return;
+
       await writeEvent(tx, {
         ticketId: ticket.id,
         eventType: 'reassignment',
@@ -122,7 +135,15 @@ router.post('/bulk-reassign', requireRole('supervisor'), async (req: Request, re
       });
     });
 
-    results.push({ ticket_id: ticketId, success: true });
+    results.push(
+      won
+        ? { ticket_id: ticketId, success: true }
+        : {
+            ticket_id: ticketId,
+            success: false,
+            reason: 'This ticket changed while the batch was running',
+          }
+    );
   }
 
   res.json(results);
@@ -171,8 +192,18 @@ router.post('/bulk-close', requireRole('supervisor'), async (req: Request, res: 
       continue;
     }
 
+    // Guarded on the status the state machine just ruled against, so a ticket closed by
+    // someone else mid-batch is reported instead of being closed a second time — which
+    // would put two `closed` rows on a timeline that cannot be corrected afterwards.
+    let won = false;
     await prisma.$transaction(async (tx) => {
-      await tx.ticket.update({ where: { id: ticket.id }, data: { status: 'closed', closedAt: new Date() } });
+      won = await guardedUpdate(
+        tx,
+        { id: ticket.id, status: ticket.status, archivedAt: null },
+        { status: 'closed', closedAt: new Date() }
+      );
+      if (!won) return;
+
       await writeEvent(tx, {
         ticketId: ticket.id,
         eventType: 'status_change',
@@ -182,7 +213,109 @@ router.post('/bulk-close', requireRole('supervisor'), async (req: Request, res: 
       });
     });
 
-    results.push({ ticket_id: ticketId, success: true });
+    results.push(
+      won
+        ? { ticket_id: ticketId, success: true }
+        : {
+            ticket_id: ticketId,
+            success: false,
+            reason: 'This ticket changed while the batch was running',
+          }
+    );
+  }
+
+  res.json(results);
+});
+
+/**
+ * POST /api/tickets/bulk-collaborators
+ *
+ * Adds or removes one agent across a selection, `{ ticket_ids, agent_id, action }`.
+ *
+ * The same shape as the other two: supervisor-only, one transaction per ticket, and a
+ * per-ticket report rather than an all-or-nothing failure — a selection off the queue
+ * routinely mixes tickets the agent is already on with ones they are not, and neither is
+ * an error worth failing the batch for.
+ *
+ * Adding someone already on a ticket, or removing someone who was not on it, is reported
+ * as a refusal with its reason rather than silently counted as success. That differs from
+ * bulk-reassign, where a ticket already held by the target counts as success: there the
+ * caller's intent is "these end up with this person" and it already does, whereas here the
+ * two actions are opposites and quietly succeeding at a no-op hides a mis-click.
+ */
+router.post('/bulk-collaborators', requireRole('supervisor'), async (req: Request, res: Response): Promise<void> => {
+  const actor = req.user!;
+  const ids = readTicketIds(req, res);
+  if (!ids) return;
+
+  const agentId = req.body?.agent_id;
+  if (typeof agentId !== 'string' || !agentId) {
+    res.status(400).json({ error: 'agent_id is required' });
+    return;
+  }
+
+  const action = req.body?.action;
+  if (action !== 'add' && action !== 'remove') {
+    res.status(400).json({ error: "action must be one of: add, remove" });
+    return;
+  }
+
+  // Validated once for the whole batch: it does not depend on any individual ticket, so a
+  // bad target fails the request up front rather than repeating itself on every line.
+  const targetCheck = await validateCollaboratorTarget(agentId);
+  if (!targetCheck.ok) {
+    res.status(400).json({ error: targetCheck.error });
+    return;
+  }
+
+  const results: BulkResult[] = [];
+
+  for (const ticketId of ids) {
+    const ticket = await prisma.ticket.findUnique({ where: { id: ticketId } });
+
+    if (!ticket) {
+      results.push({ ticket_id: ticketId, success: false, reason: 'Ticket not found' });
+      continue;
+    }
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        if (action === 'add') {
+          // No read-then-write check: the composite primary key decides, and a duplicate
+          // surfaces as P2002 below. Checking first would be the same race the single
+          // endpoint had.
+          await tx.ticketCollaborator.create({ data: { ticketId: ticket.id, agentId } });
+        } else {
+          const { count } = await tx.ticketCollaborator.deleteMany({
+            where: { ticketId: ticket.id, agentId },
+          });
+          if (count === 0) throw new ConcurrentChange('That agent is not a collaborator on this ticket');
+        }
+
+        await writeEvent(tx, {
+          ticketId: ticket.id,
+          eventType: action === 'add' ? 'collaborator_added' : 'collaborator_removed',
+          actorId: actor.userId,
+          newValue: agentId,
+        });
+      });
+
+      results.push({ ticket_id: ticketId, success: true });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        results.push({
+          ticket_id: ticketId,
+          success: false,
+          reason: 'That agent is already a collaborator on this ticket',
+        });
+        continue;
+      }
+      if (isConcurrentChange(err)) {
+        results.push({ ticket_id: ticketId, success: false, reason: err.message });
+        continue;
+      }
+      throw err;
+    }
   }
 
   res.json(results);

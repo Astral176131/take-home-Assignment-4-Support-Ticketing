@@ -22,10 +22,16 @@ export interface TicketQueryInput {
   priority?: unknown;
   category?: unknown;
   assignee_id?: unknown;
+  /** 'true' includes archived alongside live ones, 'only' returns just the archived. */
   archived?: unknown;
+  /** 'true' keeps only tickets past their response target. Applied after the query, not
+   *  in it: see the note on filterBreaching below. */
+  breaching?: unknown;
   sort?: unknown;
   dir?: unknown;
 }
+
+const ARCHIVED_MODES = ['true', 'only'] as const;
 
 type Actor = { userId: string; role: Role };
 
@@ -39,7 +45,17 @@ type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export function buildTicketWhere(actor: Actor, query: TicketQueryInput): Result<Prisma.TicketWhereInput> {
   const and: Prisma.TicketWhereInput[] = [];
 
-  and.push({ archivedAt: query.archived === 'true' ? undefined : null });
+  // Three states, not two: exclude archived (the default), include them alongside the
+  // live ones, or show nothing but the archive. 'true' keeps its original meaning so an
+  // existing link or bookmark still does what it used to.
+  if (query.archived !== undefined && query.archived !== '' && query.archived !== 'false') {
+    if (typeof query.archived !== 'string' || !ARCHIVED_MODES.includes(query.archived as 'true' | 'only')) {
+      return { ok: false, error: `archived must be one of: ${ARCHIVED_MODES.join(', ')}` };
+    }
+    if (query.archived === 'only') and.push({ archivedAt: { not: null } });
+  } else {
+    and.push({ archivedAt: null });
+  }
 
   if (actor.role === 'agent') {
     and.push({
@@ -55,6 +71,11 @@ export function buildTicketWhere(actor: Actor, query: TicketQueryInput): Result<
       OR: [
         { subject: { contains: term, mode: 'insensitive' } },
         { description: { contains: term, mode: 'insensitive' } },
+        // Requesters are searched by name too: "everything Priya Nair has raised" is the
+        // question people actually arrive with, and it was previously unanswerable
+        // without knowing a ticket key. There is no trigram index on this column, but the
+        // requester table is small and the join is on a primary key.
+        { requester: { name: { contains: term, mode: 'insensitive' } } },
       ],
     });
   }
@@ -85,6 +106,25 @@ export function buildTicketWhere(actor: Actor, query: TicketQueryInput): Result<
   }
 
   return { ok: true, value: { AND: and } };
+}
+
+/**
+ * Whether a request asked for breaching tickets only.
+ *
+ * This cannot be a WHERE clause. "Breached" is not stored: it is derived from the clock in
+ * `computeSla`, which accounts for the pause while a ticket waits on the customer and for
+ * the reopen that restarts the clock. Restating that arithmetic in SQL would put the
+ * definition of "breaching" in two places, and the queue, the alerts page and the
+ * dashboard's count would eventually disagree about which tickets are in trouble.
+ *
+ * So the filter is applied to the rows after they are read, exactly as the alerts list and
+ * the dashboard already do via findInProgressTickets. The cost is that a breaching query
+ * reads its whole scoped set before paging it. At this queue's size that is cheap; if it
+ * ever stops being cheap, the fix is to store a `breach_at` timestamp maintained from this
+ * same function and index it, not to duplicate the clock in a query.
+ */
+export function wantsBreachingOnly(query: TicketQueryInput): boolean {
+  return query.breaching === 'true';
 }
 
 /**

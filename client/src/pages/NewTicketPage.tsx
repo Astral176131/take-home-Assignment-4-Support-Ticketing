@@ -3,21 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/Badges';
+import { CATEGORY_OPTIONS, PRIORITY_OPTIONS } from '../lib/options';
+import { usePageMeta } from '../lib/usePageMeta';
 import type { Category, DuplicateHit, Paged, Person, Priority, Ticket } from '../types';
-
-const PRIORITIES: Array<{ value: Priority; label: string }> = [
-  { value: 'low', label: 'Low — 3 days' },
-  { value: 'normal', label: 'Normal — 1 day' },
-  { value: 'high', label: 'High — 4 hours' },
-  { value: 'urgent', label: 'Urgent — 1 hour' },
-];
-
-const CATEGORIES: Array<{ value: Category; label: string }> = [
-  { value: 'bug', label: 'Bug' },
-  { value: 'billing', label: 'Billing' },
-  { value: 'how_to', label: 'How-to' },
-  { value: 'other', label: 'Other' },
-];
 
 export function NewTicketPage() {
   const { user } = useAuth();
@@ -35,6 +23,11 @@ export function NewTicketPage() {
 
   const [agents, setAgents] = useState<Person[]>([]);
   const [duplicates, setDuplicates] = useState<DuplicateHit[]>([]);
+
+  usePageMeta(
+    'New ticket',
+    'Log a support request that arrived by email or by phone: the subject, what the customer said, who raised it, its priority and category, and who picks it up.'
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -49,7 +42,7 @@ export function NewTicketPage() {
 
   /**
    * Warn, don't block. The system can't tell a follow-up from a genuinely new problem,
-   * but it can make sure the agent knows this customer already has something open —
+   * but it can make sure the agent knows this customer already has something open,
    * which is the failure the whole app exists to fix.
    */
   async function checkForDuplicates() {
@@ -81,9 +74,15 @@ export function NewTicketPage() {
         category,
         ...(chosenAssignee ? { assignee_id: chosenAssignee } : {}),
       });
-      navigate(`/tickets/${ticket.id}`);
+      navigate(`/tickets/${ticket.id}`, {
+        state: { notice: ticket.key ? `${ticket.key} created.` : 'Ticket created.' },
+      });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create the ticket');
+      setError(
+        err instanceof ApiError
+          ? `The ticket could not be created. ${err.message}`
+          : 'The ticket could not be created. Check your connection, then try again. Nothing you typed has been lost.'
+      );
       setBusy(false);
     }
   }
@@ -91,17 +90,20 @@ export function NewTicketPage() {
   return (
     <div className="page">
       <Link className="back-link" to="/tickets">
-        ← Queue
+        Back to the queue
       </Link>
 
       <header className="page-header">
         <div>
           <h2>New ticket</h2>
-          <p className="page-subtitle">Log a request that arrived by email or phone.</p>
         </div>
       </header>
 
-      {error && <div className="error-message">{error}</div>}
+      {error && (
+        <div className="error-message" role="alert">
+          {error}
+        </div>
+      )}
 
       <form className="ticket-form" onSubmit={handleSubmit}>
         <div className="form-group">
@@ -110,7 +112,8 @@ export function NewTicketPage() {
             id="subject"
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
-            placeholder="Short summary of the problem"
+            placeholder="Card declined at checkout"
+            autoComplete="off"
             required
           />
         </div>
@@ -122,7 +125,8 @@ export function NewTicketPage() {
             rows={6}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="What the customer told you, in their words where possible"
+            placeholder="What the customer told you, in their words where possible…"
+            autoComplete="off"
             required
           />
         </div>
@@ -134,7 +138,8 @@ export function NewTicketPage() {
               id="requester-name"
               value={requesterName}
               onChange={(e) => setRequesterName(e.target.value)}
-              placeholder="Jane Customer"
+              placeholder="Dana Osei"
+              autoComplete="off"
               required
             />
           </div>
@@ -147,7 +152,10 @@ export function NewTicketPage() {
               value={requesterEmail}
               onChange={(e) => setRequesterEmail(e.target.value)}
               onBlur={checkForDuplicates}
-              placeholder="jane@corp.com"
+              placeholder="dana@northgate.co"
+              autoComplete="off"
+              spellCheck={false}
+              autoCapitalize="none"
               required
             />
           </div>
@@ -178,7 +186,7 @@ export function NewTicketPage() {
           <div className="form-group">
             <label htmlFor="priority">Priority</label>
             <select id="priority" value={priority} onChange={(e) => setPriority(e.target.value as Priority)}>
-              {PRIORITIES.map((p) => (
+              {PRIORITY_OPTIONS.map((p) => (
                 <option key={p.value} value={p.value}>
                   {p.label}
                 </option>
@@ -189,7 +197,7 @@ export function NewTicketPage() {
           <div className="form-group">
             <label htmlFor="category">Category</label>
             <select id="category" value={category} onChange={(e) => setCategory(e.target.value as Category)}>
-              {CATEGORIES.map((c) => (
+              {CATEGORY_OPTIONS.map((c) => (
                 <option key={c.value} value={c.value}>
                   {c.label}
                 </option>
@@ -212,7 +220,7 @@ export function NewTicketPage() {
           </div>
         ) : (
           // An agent can pick a ticket up themselves or leave it for triage, but routing
-          // it to a colleague is a supervisor's call — so there is no picker here.
+          // it to a colleague is a supervisor's call, so there is no picker here.
           <label className="toggle">
             <input
               type="checkbox"

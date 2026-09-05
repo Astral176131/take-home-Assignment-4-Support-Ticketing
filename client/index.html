@@ -2,13 +2,44 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Support Desk — Internal support ticketing system" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- Default title and description. Every route overrides both via usePageMeta,
+         so a shared link previews as the page it points at. -->
     <title>Support Desk</title>
+    <meta
+      name="description"
+      content="Support Desk is the shared support queue: pick up tickets, reply, move them through the lifecycle, and see what is about to breach its response target."
+    />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <!-- Matches --canvas in each theme so the browser chrome does not flash. -->
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0f19" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f8fa" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Support Desk" />
+    <meta property="og:title" content="Support Desk" />
+    <meta
+      property="og:description"
+      content="Support Desk is the shared support queue: pick up tickets, reply, move them through the lifecycle, and see what is about to breach its response target."
+    />
+    <meta property="og:image" content="/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
+
+    <!-- The UI font is self-hosted, so it preloads from our own origin and there
+         is no third-party request on a page that sits behind a login. -->
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/inter-latin.woff2"
+      crossorigin
+    />
   </head>
   <body>
     <div id="root"></div>

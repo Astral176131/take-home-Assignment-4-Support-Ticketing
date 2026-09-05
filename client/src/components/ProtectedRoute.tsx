@@ -6,9 +6,9 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   if (loading) {
     return (
-      <div className="loading-screen">
-        <div className="loading-spinner" />
-        <p>Loading...</p>
+      <div className="loading-screen" role="status">
+        <div className="loading-spinner" aria-hidden="true" />
+        <p>Signing you in…</p>
       </div>
     );
   }

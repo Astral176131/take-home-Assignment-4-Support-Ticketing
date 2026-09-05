@@ -7,6 +7,7 @@ import type { Ticket } from '../../types';
 
 const get = vi.fn();
 const post = vi.fn();
+const patch = vi.fn();
 const del = vi.fn();
 
 vi.mock('../../lib/api', async () => {
@@ -16,6 +17,7 @@ vi.mock('../../lib/api', async () => {
     api: {
       get: (p: string) => get(p),
       post: (p: string, b?: unknown) => post(p, b),
+      patch: (p: string, b: unknown) => patch(p, b),
       del: (p: string) => del(p),
     },
   };
@@ -26,6 +28,14 @@ let role: 'agent' | 'supervisor' = 'agent';
 
 vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'sup1', name: 'Supervisor', email: 's@x.com', role } }),
+}));
+
+// The page refreshes the shared alert count after any successful action, so the nav badge
+// follows a resolve or an acknowledge immediately instead of on its next poll.
+const refreshAlerts = vi.fn();
+
+vi.mock('../../context/AlertsContext', () => ({
+  useAlerts: () => ({ items: [], total: 0, loading: false, error: '', refresh: refreshAlerts }),
 }));
 
 const alice = { id: 'u1', name: 'Alice' };
@@ -88,7 +98,7 @@ function ticket(overrides: Partial<Ticket> = {}): Ticket {
       remaining_minutes: 140,
       breached: false,
       warning: false,
-      alert_active: false,
+      alert_active: false, snoozed_for_minutes: null,
     },
     pending_since: null,
     paused_minutes: 0,
@@ -119,6 +129,7 @@ describe('TicketDetailPage', () => {
     role = 'agent';
     get.mockReset();
     post.mockReset();
+    patch.mockReset();
     del.mockReset();
   });
 
@@ -214,7 +225,7 @@ describe('TicketDetailPage', () => {
     await user.type(box, 'A reply worth not losing');
     await user.click(screen.getByRole('button', { name: 'Add reply' }));
 
-    await screen.findByText('Internal server error');
+    await screen.findByText(/Internal server error/);
     // Lost work is worse than an error banner — the draft must still be there.
     expect(box).toHaveValue('A reply worth not losing');
   });
@@ -239,7 +250,7 @@ describe('TicketDetailPage', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Close' }));
 
-    expect(await screen.findByText('Only a supervisor can close a ticket')).toBeInTheDocument();
+    expect(await screen.findByText(/Only a supervisor can close a ticket/)).toBeInTheDocument();
   });
 
   it('freezes an archived ticket', async () => {
@@ -249,6 +260,103 @@ describe('TicketDetailPage', () => {
     expect(await screen.findByText('Archived')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Restore' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add reply' })).not.toBeInTheDocument();
+    // The server refuses an edit on an archived ticket, so the page never offers one.
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+  });
+
+  describe('editing the ticket', () => {
+    /** Open the edit form and hand back a driver for it. */
+    async function openEditor(t = ticket()) {
+      get.mockResolvedValue(t);
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Edit' }));
+      return user;
+    }
+
+    it('opens an editor prefilled with the ticket as it stands', async () => {
+      await openEditor();
+
+      expect(screen.getByLabelText('Subject')).toHaveValue('Printer will not print');
+      expect(screen.getByLabelText('Description')).toHaveValue('It makes a noise and then stops.');
+      expect(screen.getByLabelText('Priority')).toHaveValue('high');
+      expect(screen.getByLabelText('Category')).toHaveValue('bug');
+    });
+
+    it('sends only the fields that actually changed', async () => {
+      const user = await openEditor();
+      patch.mockResolvedValue(ticket({ subject: 'Printer jams on page 2' }));
+
+      const subject = screen.getByLabelText('Subject');
+      await user.clear(subject);
+      await user.type(subject, 'Printer jams on page 2');
+      await user.selectOptions(screen.getByLabelText('Priority'), 'urgent');
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      // Description and category were untouched, so they are absent from the body.
+      expect(patch).toHaveBeenCalledWith('/api/tickets/t1', {
+        subject: 'Printer jams on page 2',
+        priority_code: 'urgent',
+      });
+    });
+
+    it('re-renders from the response and closes the editor on success', async () => {
+      const user = await openEditor();
+      patch.mockResolvedValue(ticket({ subject: 'Printer jams on page 2' }));
+
+      await user.clear(screen.getByLabelText('Subject'));
+      await user.type(screen.getByLabelText('Subject'), 'Printer jams on page 2');
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      expect(await screen.findByText('Printer jams on page 2')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Subject')).not.toBeInTheDocument();
+    });
+
+    it('keeps the editor open with the edits intact when the save fails', async () => {
+      const user = await openEditor();
+      patch.mockRejectedValue(
+        new (await import('../../lib/api')).ApiError(403, 'You do not have access to this ticket')
+      );
+
+      await user.clear(screen.getByLabelText('Subject'));
+      await user.type(screen.getByLabelText('Subject'), 'Hijacked');
+      await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      expect(await screen.findByText(/You do not have access to this ticket/)).toBeInTheDocument();
+      expect(screen.getByLabelText('Subject')).toHaveValue('Hijacked');
+    });
+
+    it('cannot be saved with nothing changed, or with a field emptied', async () => {
+      const user = await openEditor();
+
+      // Nothing edited yet — the endpoint would refuse an empty body with a 400, so the
+      // button is disabled rather than the error being discovered after the fact.
+      expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+
+      await user.clear(screen.getByLabelText('Subject'));
+      expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+
+      await user.type(screen.getByLabelText('Subject'), 'A real subject');
+      expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+    });
+
+    it('discards the edits on cancel, leaving the ticket alone', async () => {
+      const user = await openEditor();
+
+      await user.clear(screen.getByLabelText('Subject'));
+      await user.type(screen.getByLabelText('Subject'), 'Never saved');
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(patch).not.toHaveBeenCalled();
+      expect(screen.getByText('Printer will not print')).toBeInTheDocument();
+    });
+
+    it('is offered to an agent, not only a supervisor — editing needs only ticket access', async () => {
+      await openEditor();
+
+      expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+    });
   });
 
   describe('acknowledging an alert', () => {
@@ -268,7 +376,7 @@ describe('TicketDetailPage', () => {
           remaining_minutes: -60,
           breached: true,
           warning: false,
-          alert_active: true,
+          alert_active: true, snoozed_for_minutes: null,
         },
       });
       get.mockResolvedValue(breaching);
@@ -282,6 +390,20 @@ describe('TicketDetailPage', () => {
       expect(post).toHaveBeenCalledWith('/api/tickets/t1/alerts/ack', undefined);
       // Re-rendered from the response: the alert is gone, so is the button.
       expect(screen.queryByRole('button', { name: 'Acknowledge' })).not.toBeInTheDocument();
+      // And the nav badge is told, rather than being left to notice on its next poll.
+      expect(refreshAlerts).toHaveBeenCalled();
+    });
+
+    it('refreshes the shared count after a status change too, not only an ack', async () => {
+      // Resolving a breaching ticket ends its clock, so it should leave the badge at once.
+      get.mockResolvedValue(ticket());
+      post.mockResolvedValue(ticket({ status: 'resolved', allowed_transitions: ['open'] }));
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Resolve' }));
+
+      expect(refreshAlerts).toHaveBeenCalled();
     });
   });
 

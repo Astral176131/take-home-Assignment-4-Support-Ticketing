@@ -35,22 +35,41 @@ const WEEKS = 8;
  * on once a ticket's response has already happened.
  */
 router.get('/', async (_req: Request, res: Response): Promise<void> => {
-  const statusCounts = await prisma.ticket.groupBy({
-    by: ['status'],
-    where: { archivedAt: null },
-    _count: true,
-  });
+  const weekStarts = lastNWeekStarts(WEEKS);
+
+  // Issued together rather than one after another. They do not depend on each other, and
+  // this is the landing page — run sequentially against a hosted database each one pays
+  // its own round trip, which was most of the endpoint's response time.
+  const [statusCounts, agentCounts, weekRows, inProgress] = await Promise.all([
+    prisma.ticket.groupBy({
+      by: ['status'],
+      where: { archivedAt: null },
+      _count: true,
+    }),
+    prisma.ticket.groupBy({
+      by: ['assigneeId'],
+      where: { archivedAt: null, assigneeId: { not: null } },
+      _count: true,
+    }),
+    prisma.$queryRaw<Array<{ week_start: Date; count: bigint }>>(Prisma.sql`
+      SELECT date_trunc('week', resolved_at) AS week_start, COUNT(*)::bigint AS count
+      FROM tickets
+      WHERE resolved_at >= ${weekStarts[0]} AND archived_at IS NULL
+      GROUP BY week_start
+      ORDER BY week_start
+    `),
+    // Breach only means something for a ticket still in progress — resolved and closed
+    // tickets already got their response, so they are excluded here even though they may
+    // still show breached: true if asked directly (that history is intentionally preserved
+    // on the ticket itself; it just isn't what "currently breaching" means on a dashboard).
+    findInProgressTickets(),
+  ]);
 
   const byStatus: Record<string, number> = Object.fromEntries(API_STATUSES.map((s) => [s, 0]));
   for (const row of statusCounts) {
     byStatus[STATUS_TO_API[row.status]] = row._count;
   }
 
-  const agentCounts = await prisma.ticket.groupBy({
-    by: ['assigneeId'],
-    where: { archivedAt: null, assigneeId: { not: null } },
-    _count: true,
-  });
   const agentIds = agentCounts.map((r) => r.assigneeId as string);
   const agents = await prisma.user.findMany({
     where: { id: { in: agentIds } },
@@ -64,14 +83,6 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
     }))
     .sort((a, b) => b.count - a.count);
 
-  const weekStarts = lastNWeekStarts(WEEKS);
-  const weekRows = await prisma.$queryRaw<Array<{ week_start: Date; count: bigint }>>(Prisma.sql`
-    SELECT date_trunc('week', resolved_at) AS week_start, COUNT(*)::bigint AS count
-    FROM tickets
-    WHERE resolved_at >= ${weekStarts[0]} AND archived_at IS NULL
-    GROUP BY week_start
-    ORDER BY week_start
-  `);
   const weekCounts = new Map(weekRows.map((r) => [isoDate(r.week_start), Number(r.count)]));
   const resolvedPerWeek = weekStarts.map((start) => ({
     week_start: isoDate(start),
@@ -81,13 +92,8 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
   // number and the chart's last bar can never disagree.
   const resolvedThisWeek = resolvedPerWeek[resolvedPerWeek.length - 1].count;
 
-  // Breach only means something for a ticket still in progress — resolved and closed
-  // tickets already got their response, so they are excluded here even though they may
-  // still show breached: true if asked directly (that history is intentionally preserved
-  // on the ticket itself; it just isn't what "currently breaching" means on a dashboard).
   // `breached` is a plain fact about the ticket, independent of acknowledgement — a
   // supervisor's count should not go quiet just because an agent silenced their own alert.
-  const inProgress = await findInProgressTickets();
   const breachingCount = inProgress.filter((t) => t.sla.breached).length;
 
   res.json({

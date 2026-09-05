@@ -189,13 +189,17 @@ async function login(email: string, password: string): Promise<string> {
  * now" from its point of view — so this is a deliberate, contained raw-Prisma pass applied
  * once a ticket's whole lifecycle has already been driven through the real routes.
  */
-async function backdateTimeline(ticketId: string, daysAgoCreated: number) {
+async function backdateTimeline(
+  ticketId: string,
+  minutesAgoCreated: number,
+  activityWindowMinutes: number
+) {
   const ticket = await prisma.ticket.findUniqueOrThrow({
     where: { id: ticketId },
     include: { events: { orderBy: { createdAt: 'asc' } }, replies: { orderBy: { createdAt: 'asc' } } },
   });
 
-  const createdAt = new Date(Date.now() - daysAgoCreated * 24 * 60 * 60_000);
+  const createdAt = new Date(Date.now() - minutesAgoCreated * 60_000);
 
   type Moment = { id: string; kind: 'event' | 'reply'; at: Date; newValue?: string | null };
   const moments: Moment[] = [
@@ -203,16 +207,27 @@ async function backdateTimeline(ticketId: string, daysAgoCreated: number) {
     ...ticket.replies.map((r) => ({ id: r.id, kind: 'reply' as const, at: r.createdAt })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
 
-  // Interpolated within a short activity window after createdAt — a few hours to a few
-  // days — not stretched out to "now" regardless of the ticket's age. Stretching to "now"
-  // was tried first and rejected: it pulls a resolution disproportionately toward the
-  // present for every ticket regardless of when it was created, since the interpolated
-  // position is always roughly "createdAt plus most of the way to today". Confirmed by
-  // inspecting a full run: created_at spread across 8 weeks correctly, but resolved_at
-  // still collapsed into the most recent 3. Real support activity happens within days of
-  // a ticket being opened, not spread across its entire age, so a short fixed window
-  // after creation both looks realistic and keeps resolvedAt's week close to createdAt's.
-  const activityWindowMs = (6 + moments.length * 8) * 60 * 60_000;
+  // Interpolated within a short activity window after createdAt, not stretched out to
+  // "now" regardless of the ticket's age. Stretching to "now" was tried first and
+  // rejected: it pulls a resolution disproportionately toward the present for every
+  // ticket regardless of when it was created, since the interpolated position is always
+  // roughly "createdAt plus most of the way to today". Confirmed by inspecting a full run:
+  // created_at spread across 8 weeks correctly, but resolved_at still collapsed into the
+  // most recent 3. Real support activity happens within hours or days of a ticket being
+  // opened, not spread across its entire age.
+  //
+  // The window is a fraction of the ticket's *own* response target (passed in by the
+  // caller) rather than a flat number of hours per event. A flat figure was tried and
+  // rejected: it made every ticket's thread take the same wall-clock time whatever its
+  // priority, so an urgent ticket — 60-minute target — would take 30 hours to reach
+  // `pending` or `resolved` and freeze its clock well past a breach, which quietly
+  // undid the deliberate choice of which tickets breach.
+  //
+  // Capped at 80% of the ticket's own age so the window can never run past "now": tickets
+  // still on a running clock are deliberately only minutes or hours old (see the age
+  // calculation in main()).
+  const ageMs = Date.now() - createdAt.getTime();
+  const activityWindowMs = Math.min(activityWindowMinutes * 60_000, ageMs * 0.8);
   const stamped = moments.map((m, i) => ({
     ...m,
     at: new Date(
@@ -230,6 +245,14 @@ async function backdateTimeline(ticketId: string, daysAgoCreated: number) {
   const resolvedMoment = stamped.find((m) => m.kind === 'event' && m.newValue === 'resolved');
   const closedMoment = stamped.find((m) => m.kind === 'event' && m.newValue === 'closed');
 
+  // `pending_since` is the moment the clock froze, so it has to move with the rest of the
+  // timeline too. Only meaningful while the ticket is actually pending — for anything else
+  // the column is already null and must stay that way. The last such transition is the one
+  // that counts, since a ticket can enter pending more than once.
+  const pendingMoments = stamped.filter((m) => m.kind === 'event' && m.newValue === 'pending');
+  const pendingMoment =
+    ticket.status === 'pending' ? pendingMoments[pendingMoments.length - 1] : undefined;
+
   await prisma.$transaction(async (tx) => {
     await tx.$executeRawUnsafe('ALTER TABLE "ticket_events" DISABLE TRIGGER ticket_events_immutable');
 
@@ -244,6 +267,13 @@ async function backdateTimeline(ticketId: string, daysAgoCreated: number) {
       data: {
         createdAt,
         updatedAt: lastMoment,
+        // The SLA clock starts when the ticket is created and only restarts on a reopen
+        // from closed, which no seeded ticket does — so it moves with created_at. Left at
+        // its `now()` default it would sit weeks *after* the ticket was created, a state
+        // the real app can never produce, and every seeded ticket's response figures would
+        // be measured from the moment the seed script ran rather than from its own age.
+        clockStartedAt: createdAt,
+        ...(pendingMoment ? { pendingSince: pendingMoment.at } : {}),
         ...(resolvedMoment ? { resolvedAt: resolvedMoment.at } : {}),
         ...(closedMoment ? { closedAt: closedMoment.at } : {}),
       },
@@ -326,8 +356,12 @@ async function main() {
   // resolved 28-41, closed 42-49 — every index below is chosen to actually land in the
   // band its comment claims, not just a number that happened to work out.
   const archivedIndices = new Set([28, 29, 30, 31, 42, 43]); // 4 resolved + 2 closed
-  const breachUnackedIndices = new Set([6, 7, 8, 9, 10]); // within the "open" band
-  const breachAckedIndices = new Set([11, 12]); // also "open"
+  // Only `new` and `open` tickets can breach: pending freezes its clock at pending_since,
+  // and resolved/closed freeze theirs at the moment the work finished, so no age makes
+  // those three breach. All three sets below therefore sit in the "open" band.
+  const breachUnackedIndices = new Set([6, 7, 8, 9, 10]);
+  const breachAckedIndices = new Set([11, 12]);
+  const warningIndices = new Set([14, 15]); // inside the 15-minute warning window
   const collaboratorIndices = new Set(Array.from({ length: TOTAL }, (_, i) => i).filter((i) => i % 4 === 0));
   const fullThreadIndices = new Set(Array.from({ length: TOTAL }, (_, i) => i).filter((i) => i % 6 === 0));
   const escalateIndices = new Set([13, 17]); // two "open" tickets, one per supervisor
@@ -417,35 +451,63 @@ async function main() {
         .send({ assignee_id: userIds[escalatingSupervisor.email] });
     }
 
-    // Breach: backdate the clock past *this ticket's own* target — low's 3-day target and
-    // urgent's 1-hour target are 70x apart, so a single flat backdate cannot breach both.
-    // Confirmed by inspecting seeded data during a dry run: a flat 3-hour backdate left
-    // "breaching" `high`-priority tickets (240-minute target) not actually breaching.
-    if ((breachUnackedIndices.has(i) || breachAckedIndices.has(i)) && (targetStatus === 'open' || targetStatus === 'new' || targetStatus === 'pending')) {
-      const targetMinutes = priorities.find((p) => p.code === priority)!.targetResponseMinutes;
-      await prisma.ticket.update({
-        where: { id: ticketId },
-        data: { clockStartedAt: new Date(Date.now() - (targetMinutes + 30) * 60_000) },
-      });
-      if (breachAckedIndices.has(i)) {
-        await request.post(`/api/tickets/${ticketId}/alerts/ack`).set('Cookie', agentCookie);
-      }
-    }
-
     if (archivedIndices.has(i)) {
       await request.post(`/api/tickets/${ticketId}/archive`).set('Cookie', agentCookie);
     }
 
-    // Spread across the last 8 weeks using i % 8 rather than a formula monotonic in i —
-    // statusPlan is also built purely from i, in status order, so a monotonic age would
-    // put every status in its own narrow age band. Confirmed by inspecting a full run:
-    // that version put every "resolved" ticket's age within a ~15-day window, so
-    // resolved_at (itself derived from a ticket's own age span) clustered into just 2 of
-    // the 8 weekly buckets instead of spreading across them, defeating the point of an
-    // 8-week chart. Decoupling week-bucket from status position fixes it.
-    const weekOffset = i % 8;
-    const daysAgo = weekOffset * 7 + ((i * 3) % 7) + 1;
-    await backdateTimeline(ticketId, daysAgo);
+    // How old this ticket should look. Since `clock_started_at` now moves with
+    // `created_at` (see backdateTimeline), a ticket's age is the only thing deciding
+    // whether it breaches — so the age is chosen deliberately rather than the clock being
+    // shifted out from under it afterwards.
+    const targetMinutes = priorities.find((p) => p.code === priority)!.targetResponseMinutes;
+    let ageMinutes: number;
+
+    if (targetStatus === 'new' || targetStatus === 'open') {
+      // A running clock. Age is set relative to *this ticket's own* target, because low's
+      // 3-day target and urgent's 1-hour target are 72x apart — a single flat age would
+      // breach one and not touch the other. (An earlier version backdated the clock by a
+      // flat 3 hours and left "breaching" `high` tickets, whose target is 4 hours, not
+      // actually breaching.)
+      if (breachUnackedIndices.has(i) || breachAckedIndices.has(i)) {
+        ageMinutes = targetMinutes + 30;
+      } else if (warningIndices.has(i)) {
+        ageMinutes = targetMinutes - 10;
+      } else {
+        ageMinutes = Math.max(5, Math.round(targetMinutes * 0.35));
+      }
+    } else {
+      // A stopped clock — pending, resolved or closed. The clock froze at the moment the
+      // ticket went pending or was resolved, which the activity window below keeps inside
+      // the target, so none of these breaches however old it is. That frees their age to
+      // spread across the last 8 weeks, which is exactly what the dashboard's
+      // resolved-per-week chart needs.
+      //
+      // Spread using i % 8 rather than a formula monotonic in i: statusPlan is also built
+      // purely from i, in status order, so a monotonic age would put every status in its
+      // own narrow age band. Confirmed by inspecting a full run — that version put every
+      // "resolved" ticket's age within a ~15-day window, so resolved_at clustered into 2
+      // of the 8 weekly buckets instead of spreading across them.
+      const weekOffset = i % 8;
+      ageMinutes = (weekOffset * 7 + ((i * 3) % 7) + 1) * 24 * 60;
+    }
+
+    // A ticket's whole thread plays out inside 60% of its response target, so the moment
+    // its clock stops — pending_since, or resolved_at — always lands comfortably inside
+    // that target. This is what keeps "which tickets breach" a decision made above rather
+    // than a side effect of how many replies a ticket happens to have.
+    await backdateTimeline(ticketId, ageMinutes, targetMinutes * 0.6);
+
+    // Acknowledged only after backdating: acknowledgement is refused unless the alert is
+    // genuinely active, and now that the clock is derived from created_at, it only becomes
+    // active once the backdating has run. The response is checked rather than fired and
+    // forgotten, so a ticket meant to demonstrate an acknowledged alert cannot silently
+    // end up without one.
+    if (breachAckedIndices.has(i)) {
+      const ack = await request.post(`/api/tickets/${ticketId}/alerts/ack`).set('Cookie', agentCookie);
+      if (ack.status !== 200) {
+        throw new Error(`Failed to acknowledge ticket ${i}: ${JSON.stringify(ack.body)}`);
+      }
+    }
 
     created++;
   }

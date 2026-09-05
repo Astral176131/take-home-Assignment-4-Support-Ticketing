@@ -14,7 +14,7 @@ interface Props {
 /**
  * Reassignment and collaborator management, for supervisors only.
  *
- * The whole block is absent for an agent — not disabled, absent — because none of these
+ * The whole block is absent for an agent, not disabled but absent, because none of these
  * actions is available to them at all. The server refuses each one with a 403 regardless
  * of what the page renders; this only avoids offering a button that cannot work.
  */
@@ -74,6 +74,7 @@ export function TicketPeople({
           )}
         </select>
         <button
+          type="button"
           className="btn"
           disabled={busy || !newAssignee}
           onClick={() => {
@@ -93,6 +94,7 @@ export function TicketPeople({
             <li key={agent.id}>
               <span>{agent.name}</span>
               <button
+                type="button"
                 className="link-button"
                 disabled={busy}
                 aria-label={`Remove ${agent.name}`}
@@ -123,6 +125,7 @@ export function TicketPeople({
           ))}
         </select>
         <button
+          type="button"
           className="btn"
           disabled={busy || !newCollaborator}
           onClick={() => {

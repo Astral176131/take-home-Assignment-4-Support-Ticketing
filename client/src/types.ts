@@ -77,6 +77,8 @@ export interface Sla {
   breached: boolean;
   warning: boolean;
   alert_active: boolean;
+  /** Minutes until an acknowledged alert comes back, or null when it is not snoozed. */
+  snoozed_for_minutes: number | null;
 }
 
 export interface TicketListItem {
@@ -129,6 +131,15 @@ export interface Paged<T> {
   /** Present on the queue list and export; absent on endpoints with no pagination. */
   page?: number;
   page_size?: number;
+}
+
+/**
+ * GET /api/alerts. `acknowledged` counts tickets that are breaching or close to it but
+ * have been acknowledged, so they are deliberately absent from `items` — without it an
+ * empty list cannot say whether nothing is wrong or everything wrong has been silenced.
+ */
+export interface AlertsResponse extends Paged<TicketListItem> {
+  acknowledged: number;
 }
 
 export type TicketSortField = 'created_at' | 'priority' | 'updated_at';

@@ -6,7 +6,9 @@ import { writeEvent } from './events.js';
 import { STATUS_TO_API, ticketPayload } from './detail.js';
 import { computeSla } from './sla.js';
 import { ticketKey } from './key.js';
-import { buildTicketWhere, resolveTicketSort, resolvePagination } from './query.js';
+import { buildTicketWhere, resolveTicketSort, resolvePagination, wantsBreachingOnly } from './query.js';
+import { ConcurrentChange, guardedUpdate, isConcurrentChange } from './concurrency.js';
+import { LIMITS, readEmail, readText } from './validation.js';
 
 const router = Router();
 
@@ -78,6 +80,7 @@ export function toListItem(ticket: Prisma.TicketGetPayload<{ include: typeof lis
       targetResponseMinutes: ticket.priority.targetResponseMinutes,
       ackCycle: ticket.ackCycle,
       ackedThroughCycle: ticket.ackedThroughCycle,
+      ackedAt: ticket.ackedAt,
     }),
     archived_at: ticket.archivedAt,
     created_at: ticket.createdAt,
@@ -138,20 +141,28 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   const { subject, description, requester, priority_code, category, assignee_id, collaborator_ids } =
     req.body ?? {};
 
-  if (typeof subject !== 'string' || !subject.trim()) {
-    res.status(400).json({ error: 'A subject is required' });
+  const subjectText = readText(subject, 'subject', LIMITS.subject);
+  if (!subjectText.ok) {
+    res.status(400).json({ error: subjectText.error });
     return;
   }
-  if (typeof description !== 'string' || !description.trim()) {
-    res.status(400).json({ error: 'A description is required' });
+  const descriptionText = readText(description, 'description', LIMITS.description);
+  if (!descriptionText.ok) {
+    res.status(400).json({ error: descriptionText.error });
     return;
   }
-  if (!requester || typeof requester.name !== 'string' || !requester.name.trim()) {
+  if (!requester || typeof requester !== 'object') {
     res.status(400).json({ error: 'A requester name is required' });
     return;
   }
-  if (typeof requester.email !== 'string' || !requester.email.includes('@')) {
-    res.status(400).json({ error: 'A valid requester email is required' });
+  const requesterName = readText(requester.name, 'requester name', LIMITS.requesterName);
+  if (!requesterName.ok) {
+    res.status(400).json({ error: requesterName.error });
+    return;
+  }
+  const requesterEmail = readEmail(requester.email, 'requester email');
+  if (!requesterEmail.ok) {
+    res.status(400).json({ error: requesterEmail.error });
     return;
   }
   if (!PRIORITIES.includes(priority_code)) {
@@ -210,16 +221,13 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
   // An existing requester keeps their name: a typo on one ticket shouldn't rewrite the
   // customer's name across their whole history.
-  const requesterRecord = await findOrCreateRequester(
-    requester.name.trim(),
-    normalizeEmail(requester.email)
-  );
+  const requesterRecord = await findOrCreateRequester(requesterName.value, requesterEmail.value);
 
   const ticketId = await prisma.$transaction(async (tx) => {
     const created = await tx.ticket.create({
       data: {
-        subject: subject.trim(),
-        description: description.trim(),
+        subject: subjectText.value,
+        description: descriptionText.value,
         requesterId: requesterRecord.id,
         priorityCode: priority_code,
         category,
@@ -251,6 +259,41 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
  * page slicing. Access scoping is folded into `buildTicketWhere` unconditionally, so no
  * combination of query parameters can widen what an agent is allowed to see.
  */
+/**
+ * One paged read, shared by the queue and by /mine so the two cannot drift apart in what
+ * a filter means or how a page is counted.
+ *
+ * The breaching filter takes the slower path deliberately: it is the one condition that
+ * is computed rather than stored (see wantsBreachingOnly), so those rows have to be read
+ * before they can be filtered, and the page is then cut from what survives. Everything
+ * else still pages in the database.
+ */
+async function pagedTickets(
+  where: Prisma.TicketWhereInput,
+  orderBy: Prisma.TicketOrderByWithRelationInput,
+  query: Request['query']
+) {
+  const { page, pageSize, skip } = resolvePagination(query);
+
+  if (wantsBreachingOnly(query)) {
+    const rows = await prisma.ticket.findMany({ where, include: listInclude, orderBy });
+    const breaching = rows.map(toListItem).filter((t) => t.sla.breached);
+    return {
+      items: breaching.slice(skip, skip + pageSize),
+      total: breaching.length,
+      page,
+      page_size: pageSize,
+    };
+  }
+
+  const [items, total] = await Promise.all([
+    prisma.ticket.findMany({ where, include: listInclude, orderBy, skip, take: pageSize }),
+    prisma.ticket.count({ where }),
+  ]);
+
+  return { items: items.map(toListItem), total, page, page_size: pageSize };
+}
+
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const actor = req.user!;
 
@@ -266,20 +309,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  const { page, pageSize, skip } = resolvePagination(req.query);
-
-  const [items, total] = await Promise.all([
-    prisma.ticket.findMany({
-      where: where.value,
-      include: listInclude,
-      orderBy: orderBy.value,
-      skip,
-      take: pageSize,
-    }),
-    prisma.ticket.count({ where: where.value }),
-  ]);
-
-  res.json({ items: items.map(toListItem), total, page, page_size: pageSize });
+  res.json(await pagedTickets(where.value, orderBy.value, req.query));
 });
 
 /**
@@ -295,17 +325,31 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 router.get('/mine', async (req: Request, res: Response): Promise<void> => {
   const actor = req.user!;
 
-  const where: Prisma.TicketWhereInput = {
-    archivedAt: req.query.archived === 'true' ? undefined : null,
-    OR: [{ assigneeId: actor.userId }, { collaborators: { some: { agentId: actor.userId } } }],
+  // The same filters, sort and paging as the queue, so the two lists behave identically
+  // and there is one definition of what `status=open` or `breaching=true` means.
+  const where = buildTicketWhere(actor, req.query);
+  if (!where.ok) {
+    res.status(400).json({ error: where.error });
+    return;
+  }
+
+  const orderBy = resolveTicketSort(req.query);
+  if (!orderBy.ok) {
+    res.status(400).json({ error: orderBy.error });
+    return;
+  }
+
+  // ANDed on top rather than passed through the builder: buildTicketWhere narrows an
+  // agent to their own work already, but a supervisor it deliberately does not, and this
+  // list is "what I hold" for both roles.
+  const mine: Prisma.TicketWhereInput = {
+    AND: [
+      where.value,
+      { OR: [{ assigneeId: actor.userId }, { collaborators: { some: { agentId: actor.userId } } }] },
+    ],
   };
 
-  const [items, total] = await Promise.all([
-    prisma.ticket.findMany({ where, include: listInclude, orderBy: { createdAt: 'desc' } }),
-    prisma.ticket.count({ where }),
-  ]);
-
-  res.json({ items: items.map(toListItem), total });
+  res.json(await pagedTickets(mine, orderBy.value, req.query));
 });
 
 // --- Read one ----------------------------------------------------------------
@@ -347,18 +391,20 @@ router.patch('/:id', requireTicketAccess, async (req: Request<TicketParams>, res
   const data: Prisma.TicketUpdateInput = {};
 
   if (subject !== undefined) {
-    if (typeof subject !== 'string' || !subject.trim()) {
-      res.status(400).json({ error: 'A subject is required' });
+    const next = readText(subject, 'subject', LIMITS.subject);
+    if (!next.ok) {
+      res.status(400).json({ error: next.error });
       return;
     }
-    data.subject = subject.trim();
+    data.subject = next.value;
   }
   if (description !== undefined) {
-    if (typeof description !== 'string' || !description.trim()) {
-      res.status(400).json({ error: 'A description is required' });
+    const next = readText(description, 'description', LIMITS.description);
+    if (!next.ok) {
+      res.status(400).json({ error: next.error });
       return;
     }
-    data.description = description.trim();
+    data.description = next.value;
   }
   if (priority_code !== undefined) {
     if (!PRIORITIES.includes(priority_code)) {
@@ -385,6 +431,14 @@ router.patch('/:id', requireTicketAccess, async (req: Request<TicketParams>, res
     res.status(404).json({ error: 'Ticket not found' });
     return;
   }
+  // An archived ticket is frozen, the same way it is for status changes, replies and
+  // reassignment. This route was the one mutation that let an edit through — and since
+  // field edits write no history row, an archived ticket's subject could have been
+  // rewritten leaving nothing on the timeline to say so.
+  if (existing.archivedAt) {
+    res.status(409).json({ error: 'This ticket is archived — restore it before editing it' });
+    return;
+  }
 
   // Field edits write no history row: the brief's timeline covers status changes,
   // reassignments and replies, and ticket_events has no event type for a field edit.
@@ -408,10 +462,23 @@ router.post('/:id/archive', requireTicketAccess, async (req: Request<TicketParam
     return;
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.ticket.update({ where: { id: ticket.id }, data: { archivedAt: new Date() } });
-    await writeEvent(tx, { ticketId: ticket.id, eventType: 'archived', actorId: actor.userId });
-  });
+  // Conditional on it still being unarchived: two archive requests at once would otherwise
+  // both succeed and write two `archived` rows into a timeline that, by database trigger,
+  // can never be corrected.
+  try {
+    await prisma.$transaction(async (tx) => {
+      const won = await guardedUpdate(tx, { id: ticket.id, archivedAt: null }, { archivedAt: new Date() });
+      if (!won) throw new ConcurrentChange('This ticket is already archived');
+
+      await writeEvent(tx, { ticketId: ticket.id, eventType: 'archived', actorId: actor.userId });
+    });
+  } catch (err) {
+    if (isConcurrentChange(err)) {
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
 
   res.json((await ticketPayload(ticket.id, actor.role))!);
 });
@@ -429,10 +496,20 @@ router.post('/:id/restore', requireTicketAccess, async (req: Request<TicketParam
     return;
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.ticket.update({ where: { id: ticket.id }, data: { archivedAt: null } });
-    await writeEvent(tx, { ticketId: ticket.id, eventType: 'restored', actorId: actor.userId });
-  });
+  try {
+    await prisma.$transaction(async (tx) => {
+      const won = await guardedUpdate(tx, { id: ticket.id, archivedAt: { not: null } }, { archivedAt: null });
+      if (!won) throw new ConcurrentChange('This ticket is not archived');
+
+      await writeEvent(tx, { ticketId: ticket.id, eventType: 'restored', actorId: actor.userId });
+    });
+  } catch (err) {
+    if (isConcurrentChange(err)) {
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
 
   res.json((await ticketPayload(ticket.id, actor.role))!);
 });

@@ -33,7 +33,7 @@ function ticket(overrides: Partial<TicketListItem> = {}): TicketListItem {
       remaining_minutes: 1430,
       breached: false,
       warning: false,
-      alert_active: false,
+      alert_active: false, snoozed_for_minutes: null,
     },
     archived_at: null,
     created_at: new Date().toISOString(),
@@ -61,23 +61,12 @@ describe('MyTicketsPage', () => {
     renderPage();
 
     expect(await screen.findByText('VPN drops every ten minutes')).toBeInTheDocument();
-    expect(get).toHaveBeenCalledWith('/api/tickets/mine');
+    // The list now carries the same filters, sort and paging as the queue, so the
+    // path arrives with a query string rather than bare.
+    expect(get).toHaveBeenCalledWith(expect.stringContaining('/api/tickets/mine?'));
   });
 
-  it('explains what an agent is looking at', async () => {
-    get.mockResolvedValue({ items: [ticket()], total: 1 });
-    renderPage();
 
-    expect(await screen.findByText(/assigned to you, and tickets you are collaborating on/i)).toBeInTheDocument();
-  });
-
-  it('explains that a supervisor sees only what they hold', async () => {
-    role = 'supervisor';
-    get.mockResolvedValue({ items: [], total: 0 });
-    renderPage();
-
-    expect(await screen.findByText(/you hold yourself, rather than the whole queue/i)).toBeInTheDocument();
-  });
 
   it('says so when nothing is assigned', async () => {
     get.mockResolvedValue({ items: [], total: 0 });

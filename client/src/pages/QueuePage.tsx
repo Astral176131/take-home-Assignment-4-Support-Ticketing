@@ -1,43 +1,31 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { TicketTable } from '../components/TicketTable';
+import { TicketFilters } from '../components/TicketFilters';
+import { Pagination } from '../components/Pagination';
 import { BulkActionBar } from '../components/BulkActionBar';
 import { useAuth } from '../context/AuthContext';
-import type { Category, Paged, Person, Priority, SortDirection, TicketListItem, TicketSortField, TicketStatus } from '../types';
-
-const PAGE_SIZE = 25;
-
-const STATUSES: TicketStatus[] = ['new', 'open', 'pending', 'resolved', 'closed'];
-const PRIORITIES: Priority[] = ['low', 'normal', 'high', 'urgent'];
-const CATEGORIES: Category[] = ['bug', 'billing', 'how_to', 'other'];
+import { usePageMeta } from '../lib/usePageMeta';
+import { PAGE_SIZE, useTicketQuery } from '../lib/useTicketQuery';
+import type { Paged, Person, TicketListItem } from '../types';
 
 export function QueuePage() {
   const { user } = useAuth();
   const isSupervisor = user?.role === 'supervisor';
 
+  usePageMeta(
+    'Queue',
+    'Search and filter the whole support queue by status, priority, category and assignee, sort it by priority or last update, and act on several tickets at once.'
+  );
+
+  const query = useTicketQuery();
+  const { queryString, page, sort, dir, setParam, toggleSort, hasFilters, clearFilters } = query;
+
   const [tickets, setTickets] = useState<TicketListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-
-  // The text box updates immediately; `q` — what actually drives the fetch — only catches
-  // up after a short pause, so typing doesn't fire a request per keystroke.
-  const [qInput, setQInput] = useState('');
-  const [q, setQ] = useState('');
-  useEffect(() => {
-    const id = setTimeout(() => setQ(qInput), 300);
-    return () => clearTimeout(id);
-  }, [qInput]);
-
-  const [status, setStatus] = useState('');
-  const [priority, setPriority] = useState('');
-  const [category, setCategory] = useState('');
-  const [assigneeId, setAssigneeId] = useState('');
-  const [showArchived, setShowArchived] = useState(false);
-  const [sort, setSort] = useState<TicketSortField>('created_at');
-  const [dir, setDir] = useState<SortDirection>('desc');
-  const [page, setPage] = useState(1);
 
   const [agents, setAgents] = useState<Person[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -52,27 +40,12 @@ export function QueuePage() {
       .catch(() => setAgents([]));
   }, [isSupervisor]);
 
-  // Any change here means a different page 1 result set, so page resets — and whatever
-  // was selected almost certainly no longer refers to what's on screen.
+  // Whatever was selected almost certainly no longer refers to what is on screen once the
+  // result set changes. (Paging back to a page resets it too, which is the safe direction
+  // to be wrong in: acting on rows you can no longer see is the thing worth preventing.)
   useEffect(() => {
-    setPage(1);
     setSelected(new Set());
-  }, [q, status, priority, category, assigneeId, showArchived, sort, dir]);
-
-  const queryString = useMemo(() => {
-    const params = new URLSearchParams();
-    if (q) params.set('q', q);
-    if (status) params.set('status', status);
-    if (priority) params.set('priority', priority);
-    if (category) params.set('category', category);
-    if (assigneeId) params.set('assignee_id', assigneeId);
-    if (showArchived) params.set('archived', 'true');
-    params.set('sort', sort);
-    params.set('dir', dir);
-    params.set('page', String(page));
-    params.set('page_size', String(PAGE_SIZE));
-    return params.toString();
-  }, [q, status, priority, category, assigneeId, showArchived, sort, dir, page]);
+  }, [queryString]);
 
   useEffect(() => {
     setLoading(true);
@@ -83,20 +56,15 @@ export function QueuePage() {
         setTotal(data.total);
         setError('');
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load tickets'))
+      .catch((err) =>
+        setError(
+          err instanceof ApiError
+            ? `The queue could not be loaded. ${err.message}`
+            : 'The queue could not be loaded. Check your connection, then reload the page.'
+        )
+      )
       .finally(() => setLoading(false));
   }, [queryString]);
-
-  function toggleSort(field: TicketSortField) {
-    if (sort === field) {
-      setDir(dir === 'asc' ? 'desc' : 'asc');
-    } else {
-      // A newly clicked column always starts descending — newest/highest first, matching
-      // the default the page loads with.
-      setSort(field);
-      setDir('desc');
-    }
-  }
 
   function toggleSelect(ticketId: string) {
     setSelected((prev) => {
@@ -128,17 +96,15 @@ export function QueuePage() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  // The bulk report comes back keyed by ticket id; this is how it gets turned back into
+  // something a person can read.
+  const ticketKeys = Object.fromEntries(tickets.map((t) => [t.id, t.key]));
+
   return (
     <div className="page">
       <header className="page-header">
         <div>
           <h2>Queue</h2>
-          <p className="page-subtitle">
-            {/* Scoping is enforced server-side; this only explains what you are seeing. */}
-            {isSupervisor
-              ? 'Every ticket in the system'
-              : 'Tickets assigned to you or where you are a collaborator'}
-          </p>
         </div>
         <div className="page-actions">
           <a className="btn" href={`/api/tickets/export.csv?${queryString}`}>
@@ -150,86 +116,54 @@ export function QueuePage() {
         </div>
       </header>
 
-      <div className="filters-bar">
-        <input
-          className="filter-search"
-          type="search"
-          placeholder="Search subject and description…"
-          value={qInput}
-          onChange={(e) => setQInput(e.target.value)}
-          aria-label="Search tickets"
-        />
+      <TicketFilters query={query} agents={isSupervisor ? agents : undefined} />
 
-        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-
-        <select value={priority} onChange={(e) => setPriority(e.target.value)} aria-label="Filter by priority">
-          <option value="">All priorities</option>
-          {PRIORITIES.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-
-        <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Filter by category">
-          <option value="">All categories</option>
-          {CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-
-        {isSupervisor && (
-          <select
-            value={assigneeId}
-            onChange={(e) => setAssigneeId(e.target.value)}
-            aria-label="Filter by assignee"
-          >
-            <option value="">All assignees</option>
-            {agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name}
-              </option>
-            ))}
-          </select>
-        )}
-
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(e) => setShowArchived(e.target.checked)}
-          />
-          Show archived
-        </label>
-      </div>
-
-      {error && <div className="error-message">{error}</div>}
+      {error && (
+        <div className="error-message" role="alert">
+          {error}
+        </div>
+      )}
 
       {isSupervisor && selected.size > 0 && (
         <BulkActionBar
           selectedIds={[...selected]}
+          ticketKeys={ticketKeys}
           onClear={() => setSelected(new Set())}
           onDone={refetch}
         />
       )}
 
       {loading ? (
-        <p className="muted">Loading…</p>
+        <>
+          <div className="skeleton-list" aria-hidden="true">
+            <div className="skeleton" />
+            <div className="skeleton" />
+            <div className="skeleton" />
+            <div className="skeleton" />
+            <div className="skeleton" />
+          </div>
+          <p className="sr-only" role="status">
+            Loading tickets
+          </p>
+        </>
       ) : tickets.length === 0 ? (
         <div className="empty-state">
-          <p>No tickets match these filters.</p>
-          <Link className="btn btn-primary" to="/tickets/new">
-            Create a ticket
-          </Link>
+          <h3>No tickets match these filters</h3>
+          <p>
+            {hasFilters
+              ? 'Widen the search, or clear the filters to see the whole queue.'
+              : 'Nothing is in the queue yet. Log the first request that came in by email or phone.'}
+          </p>
+          <div className="page-actions">
+            {hasFilters && (
+              <button type="button" className="btn" onClick={clearFilters}>
+                Clear filters
+              </button>
+            )}
+            <Link className="btn btn-primary" to="/tickets/new">
+              New ticket
+            </Link>
+          </div>
         </div>
       ) : (
         <>
@@ -243,17 +177,12 @@ export function QueuePage() {
             onToggleSelectAll={isSupervisor ? toggleSelectAll : undefined}
           />
 
-          <div className="pagination">
-            <button className="btn" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              Previous
-            </button>
-            <span className="muted">
-              Page {page} of {totalPages} · {total} ticket{total === 1 ? '' : 's'}
-            </span>
-            <button className="btn" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-              Next
-            </button>
-          </div>
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            onPage={(next) => setParam('page', String(next), false)}
+          />
         </>
       )}
     </div>

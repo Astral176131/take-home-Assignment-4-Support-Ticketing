@@ -121,6 +121,12 @@ model Ticket {
   archivedAt      DateTime?    @map("archived_at")
   ackCycle        Int          @default(0) @map("ack_cycle")
   ackedThroughCycle Int?       @map("acked_through_cycle")
+  // When the current acknowledgement was made. An acknowledgement silences an alert for
+  // ACK_SNOOZE_MINUTES rather than for the whole cycle: a ticket that is acknowledged and
+  // then left unresolved has to come back, or acknowledging becomes a way of losing it.
+  // Null means either never acknowledged, or acknowledged before this column existed, and
+  // both of those read as "the snooze has expired".
+  ackedAt         DateTime?    @map("acked_at")
   createdAt       DateTime     @default(now()) @map("created_at")
   updatedAt       DateTime     @updatedAt @map("updated_at")
 

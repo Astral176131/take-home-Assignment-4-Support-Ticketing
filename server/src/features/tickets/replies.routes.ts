@@ -5,6 +5,8 @@ import { authenticate, requireTicketAccess } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { pauseCreditMinutes } from './clock.js';
 import { ticketPayload } from './detail.js';
+import { guardedUpdate } from './concurrency.js';
+import { LIMITS, readText } from './validation.js';
 
 const router = Router();
 
@@ -28,8 +30,9 @@ router.post(
     const actor = req.user!;
     const { body, is_internal, author_type } = req.body ?? {};
 
-    if (typeof body !== 'string' || !body.trim()) {
-      res.status(400).json({ error: 'A reply body is required' });
+    const replyBody = readText(body, 'reply body', LIMITS.replyBody);
+    if (!replyBody.ok) {
+      res.status(400).json({ error: replyBody.error });
       return;
     }
 
@@ -68,7 +71,7 @@ router.post(
           ticketId: ticket.id,
           authorId: actor.userId,
           authorType,
-          body: body.trim(),
+          body: replyBody.value,
           isInternal,
         },
       });
@@ -82,24 +85,33 @@ router.post(
       });
 
       if (reopensFromPending) {
-        await tx.ticket.update({
-          where: { id: ticket.id },
-          data: {
+        // Conditional on the ticket still being pending. A customer reply and a manual
+        // "Resume" landing together both read the same `pending_since` and both credited
+        // it, leaving the ticket with twice the paused time it actually spent — which
+        // silently pushes a real breach back under its target. Only the request that still
+        // finds the ticket pending credits the pause and records the transition; the other
+        // has nothing to resume, and its reply is unaffected either way.
+        const resumed = await guardedUpdate(
+          tx,
+          { id: ticket.id, status: 'pending', pendingSince: { not: null } },
+          {
             status: 'open',
             pendingSince: null,
             pausedMinutes: {
               increment: ticket.pendingSince ? pauseCreditMinutes(ticket.pendingSince) : 0,
             },
-          },
-        });
+          }
+        );
 
-        await writeEvent(tx, {
-          ticketId: ticket.id,
-          eventType: 'status_change',
-          actorId: actor.userId,
-          oldValue: 'pending',
-          newValue: 'open',
-        });
+        if (resumed) {
+          await writeEvent(tx, {
+            ticketId: ticket.id,
+            eventType: 'status_change',
+            actorId: actor.userId,
+            oldValue: 'pending',
+            newValue: 'open',
+          });
+        }
       }
     });
 

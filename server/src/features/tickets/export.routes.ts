@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate } from '../../middleware/auth.js';
-import { buildTicketWhere, resolveTicketSort } from './query.js';
+import { buildTicketWhere, resolveTicketSort, wantsBreachingOnly } from './query.js';
 import { STATUS_TO_API } from './stateMachine.js';
 import { computeSla } from './sla.js';
 import { ticketKey } from './key.js';
@@ -61,6 +61,10 @@ router.get('/export.csv', async (req: Request, res: Response): Promise<void> => 
     return;
   }
 
+  // Same computed filter the queue applies, so an export of a breaching view contains
+  // the rows that view was showing rather than the unfiltered set behind it.
+  const breachingOnly = wantsBreachingOnly(req.query);
+
   const filename = `tickets-${new Date().toISOString().slice(0, 10)}.csv`;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -90,7 +94,10 @@ router.get('/export.csv', async (req: Request, res: Response): Promise<void> => 
         targetResponseMinutes: ticket.priority.targetResponseMinutes,
         ackCycle: ticket.ackCycle,
         ackedThroughCycle: ticket.ackedThroughCycle,
+        ackedAt: ticket.ackedAt,
       });
+
+      if (breachingOnly && !sla.breached) continue;
 
       res.write(
         csvRow([

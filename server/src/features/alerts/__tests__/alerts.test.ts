@@ -198,6 +198,25 @@ describe('Alerts and acknowledgement', () => {
     it('rejects an unauthenticated request', async () => {
       expect((await request.get('/api/alerts')).status).toBe(401);
     });
+
+    it('counts breaching-but-acknowledged tickets separately from the list', async () => {
+      // Without this the caller cannot tell "nothing is wrong" from "everything wrong has
+      // been silenced" — and the dashboard's breaching count, which ignores
+      // acknowledgement by design, then looks like it contradicts an empty alerts page.
+      const ticket = await newOpenUrgentTicket();
+      await backdateToBreach(ticket);
+
+      const before = await request.get('/api/alerts').set('Cookie', supervisorCookie);
+      expect(alertIds(before)).toContain(ticket);
+      const ackedBefore = before.body.acknowledged;
+
+      await request.post(`/api/tickets/${ticket}/alerts/ack`).set('Cookie', supervisorCookie);
+
+      const after = await request.get('/api/alerts').set('Cookie', supervisorCookie);
+      expect(alertIds(after)).not.toContain(ticket);
+      // It left the list and arrived in the count — it is silenced, not fixed.
+      expect(after.body.acknowledged).toBe(ackedBefore + 1);
+    });
   });
 
   describe('POST /api/tickets/:id/alerts/ack', () => {

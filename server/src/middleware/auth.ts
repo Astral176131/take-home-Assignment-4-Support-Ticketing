@@ -18,11 +18,20 @@ declare global {
 }
 
 /**
- * Authenticate middleware — reads JWT from httpOnly cookie,
- * verifies it, and attaches user info to req.user.
- * Returns 401 on missing/invalid/expired token.
+ * Authenticate middleware — reads JWT from httpOnly cookie, verifies it, and attaches
+ * user info to req.user. Returns 401 on missing/invalid/expired token.
+ *
+ * The signature proves the token was issued here. It does not prove the user still exists,
+ * or that they still hold the role the token was minted with — a token stays valid for its
+ * full hour, and logging out only clears the cookie in the browser. So identity comes from
+ * the token and everything else comes from the database row it points at: a deleted user
+ * is refused on their next request rather than an hour later, and an agent promoted or
+ * demoted takes effect immediately instead of at the next login.
+ *
+ * The cost is one indexed primary-key lookup per request, which is the same order as the
+ * work every authorized route already does.
  */
-export function authenticate(req: Request, res: Response, next: NextFunction): void {
+export async function authenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
   const token = req.cookies?.token;
 
   if (!token) {
@@ -30,24 +39,26 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     return;
   }
 
+  let payload: { userId: string };
   try {
-    const payload = jwt.verify(token, getJwtSecret()) as {
-      userId: string;
-      email: string;
-      role: Role;
-    };
-
-    req.user = {
-      userId: payload.userId,
-      email: payload.email,
-      role: payload.role,
-    };
-
-    next();
-  } catch (err) {
+    payload = jwt.verify(token, getJwtSecret()) as { userId: string };
+  } catch {
     res.status(401).json({ error: 'Invalid or expired token' });
     return;
   }
+
+  const user = await prisma.user.findUnique({
+    where: { id: payload.userId },
+    select: { id: true, email: true, role: true },
+  });
+
+  if (!user) {
+    res.status(401).json({ error: 'Invalid or expired token' });
+    return;
+  }
+
+  req.user = { userId: user.id, email: user.email, role: user.role };
+  next();
 }
 
 /**
@@ -107,8 +118,10 @@ export async function checkTicketAccess(
     },
   });
 
+  // Deliberately the same answer as "this ticket isn't yours". Distinguishing them would
+  // tell any agent which ticket ids exist, and the caller cannot act on either case.
   if (!ticket) {
-    return { allowed: false, reason: 'Ticket not found' };
+    return { allowed: false, reason: 'You do not have access to this ticket' };
   }
 
   const isAssignee = ticket.assigneeId === userId;
@@ -147,7 +160,7 @@ export function requireTicketAccess(req: Request, res: Response, next: NextFunct
       }
       next();
     })
-    .catch((err) => {
-      res.status(500).json({ error: 'Internal server error' });
-    });
+    // Handed to the central error handler rather than swallowed, so the cause reaches the
+    // log instead of a bare 500 with nothing behind it.
+    .catch(next);
 }

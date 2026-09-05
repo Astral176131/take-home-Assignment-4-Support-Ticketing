@@ -63,7 +63,11 @@ describe('NewTicketPage', () => {
       priority_code: 'normal',
       category: 'bug',
     });
-    expect(navigate).toHaveBeenCalledWith('/tickets/new-1');
+    // The confirmation travels with the navigation, so it can be shown on the
+    // page the user lands on rather than the one they are leaving.
+    expect(navigate).toHaveBeenCalledWith('/tickets/new-1', {
+      state: { notice: 'Ticket created.' },
+    });
   });
 
   it('sends the agent as assignee only when they opt in', async () => {
@@ -127,7 +131,9 @@ describe('NewTicketPage', () => {
     await user.click(screen.getByRole('button', { name: 'Create ticket' }));
 
     expect(post).toHaveBeenCalled();
-    expect(navigate).toHaveBeenCalledWith('/tickets/new-3');
+    expect(navigate).toHaveBeenCalledWith('/tickets/new-3', {
+      state: { notice: 'Ticket created.' },
+    });
   });
 
   it("shows the server's reason when creation is refused", async () => {
@@ -139,7 +145,7 @@ describe('NewTicketPage', () => {
     await fillRequired(user);
     await user.click(screen.getByRole('button', { name: 'Create ticket' }));
 
-    expect(await screen.findByText('A subject is required')).toBeInTheDocument();
+    expect(await screen.findByText(/A subject is required/)).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
   });
 });

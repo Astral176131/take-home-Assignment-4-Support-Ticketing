@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueuePage } from '../QueuePage';
@@ -38,7 +38,7 @@ function ticket(overrides: Partial<TicketListItem> = {}): TicketListItem {
       remaining_minutes: 140,
       breached: false,
       warning: false,
-      alert_active: false,
+      alert_active: false, snoozed_for_minutes: null,
     },
     archived_at: null,
     created_at: new Date().toISOString(),
@@ -76,10 +76,13 @@ describe('QueuePage', () => {
     renderQueue();
 
     expect(await screen.findByText('Printer will not print')).toBeInTheDocument();
-    expect(screen.getByText('Open')).toBeInTheDocument();
-    expect(screen.getByText('High')).toBeInTheDocument();
-    expect(screen.getByText('Jane Customer')).toBeInTheDocument();
-    expect(screen.getByText('2h 20m left')).toBeInTheDocument();
+    // Scoped to the table: the filter dropdowns now carry readable labels too,
+    // so "Open" and "High" each appear as an <option> as well as a chip.
+    const table = within(screen.getByRole('region', { name: 'Tickets' }));
+    expect(table.getByText('Open')).toBeInTheDocument();
+    expect(table.getByText('High')).toBeInTheDocument();
+    expect(table.getByText('Jane Customer')).toBeInTheDocument();
+    expect(table.getByText('2h 20m left')).toBeInTheDocument();
   });
 
   it('marks a breached ticket rather than showing time remaining', async () => {
@@ -92,7 +95,7 @@ describe('QueuePage', () => {
             remaining_minutes: -60,
             breached: true,
             warning: false,
-            alert_active: true,
+            alert_active: true, snoozed_for_minutes: null,
           },
         }),
       ],
@@ -122,7 +125,7 @@ describe('QueuePage', () => {
       await waitFor(() => expect(ticketsQuery()).not.toContain('q='));
 
       get.mockClear();
-      await user.type(screen.getByLabelText('Search tickets'), 'print');
+      await user.type(screen.getByLabelText(/search tickets/i), 'print');
 
       // Nothing yet — still inside the debounce window.
       expect(get).not.toHaveBeenCalled();
@@ -254,18 +257,72 @@ describe('QueuePage', () => {
       await screen.findByText('1 selected');
 
       const callsBefore = get.mock.calls.length;
-      await user.selectOptions(await screen.findByLabelText('Reassign selected to'), 'u9');
-      await user.click(screen.getByRole('button', { name: 'Reassign' }));
+      await user.selectOptions(await screen.findByLabelText('Assign selected to'), 'u9');
+      await user.click(screen.getByRole('button', { name: 'Assign' }));
 
       expect(post).toHaveBeenCalledWith('/api/tickets/bulk-reassign', {
         ticket_ids: ['t1'],
         assignee_id: 'u9',
       });
-      expect(await screen.findByText('0 of 1 succeeded.')).toBeInTheDocument();
+      expect(await screen.findByText(/0 of 1 succeeded\./)).toBeInTheDocument();
       // Scoped to the failure list item — "Show archived" also matches /archived/ loosely.
       expect(screen.getByText(/archived/, { selector: 'li' })).toBeInTheDocument();
       // The table was reloaded after the action, not left showing stale data.
       await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(callsBefore));
+    });
+
+    it('bulk-adds and bulk-removes a collaborator across the selection', async () => {
+      role = 'supervisor';
+      get.mockImplementation((path: string) =>
+        path === '/api/agents'
+          ? Promise.resolve({ items: [{ id: 'u9', name: 'Agent Zed' }], total: 1 })
+          : Promise.resolve({ items: [ticket()], total: 1 })
+      );
+      post.mockResolvedValue([{ ticket_id: 't1', success: true }]);
+      const user = userEvent.setup();
+      renderQueue();
+      await screen.findByText('Printer will not print');
+
+      await user.click(screen.getByLabelText('Select SUP-1'));
+      await screen.findByText('1 selected');
+
+      await user.selectOptions(
+        await screen.findByLabelText('Add or remove collaborator on selected'),
+        'u9'
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Add collaborator' }));
+      expect(post).toHaveBeenCalledWith('/api/tickets/bulk-collaborators', {
+        ticket_ids: ['t1'],
+        agent_id: 'u9',
+        action: 'add',
+      });
+
+      await user.click(screen.getByRole('button', { name: 'Remove collaborator' }));
+      expect(post).toHaveBeenCalledWith('/api/tickets/bulk-collaborators', {
+        ticket_ids: ['t1'],
+        agent_id: 'u9',
+        action: 'remove',
+      });
+    });
+
+    it('names the close action after what it closes', async () => {
+      // "Close" next to "Clear selection" reads as "close this bar". It closes tickets.
+      role = 'supervisor';
+      get.mockImplementation((path: string) =>
+        path === '/api/agents'
+          ? Promise.resolve({ items: [{ id: 'u9', name: 'Agent Zed' }], total: 1 })
+          : Promise.resolve({ items: [ticket()], total: 1 })
+      );
+      post.mockResolvedValue([{ ticket_id: 't1', success: true }]);
+      const user = userEvent.setup();
+      renderQueue();
+      await screen.findByText('Printer will not print');
+
+      await user.click(screen.getByLabelText('Select SUP-1'));
+      await user.click(await screen.findByRole('button', { name: 'Close tickets' }));
+
+      expect(post).toHaveBeenCalledWith('/api/tickets/bulk-close', { ticket_ids: ['t1'] });
     });
   });
 

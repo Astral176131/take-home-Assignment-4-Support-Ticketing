@@ -146,8 +146,12 @@ describe('sla', () => {
     targetResponseMinutes: 60,
     ackCycle: 0,
     ackedThroughCycle: null,
+    ackedAt: null,
   };
   const now = new Date('2026-09-02T11:00:00Z'); // one hour after the clock started
+
+  /** An acknowledgement made `minutes` before `now`. */
+  const ackedAgo = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
 
   it('counts elapsed time from the clock start, minus paused minutes', () => {
     expect(computeSla(base, now).elapsed_minutes).toBe(60);
@@ -201,12 +205,46 @@ describe('sla', () => {
 
     it('is on for an unacknowledged breach and off once acknowledged', () => {
       expect(computeSla(breaching, now).alert_active).toBe(true);
-      expect(computeSla({ ...breaching, ackedThroughCycle: 0 }, now).alert_active).toBe(false);
+      expect(
+        computeSla({ ...breaching, ackedThroughCycle: 0, ackedAt: ackedAgo(1) }, now).alert_active
+      ).toBe(false);
+    });
+
+    it('stays quiet for the length of the snooze window', () => {
+      const acked = { ...breaching, ackedThroughCycle: 0, ackedAt: ackedAgo(59) };
+      expect(computeSla(acked, now).alert_active).toBe(false);
+      expect(computeSla(acked, now).snoozed_for_minutes).toBe(1);
+    });
+
+    it('comes back once the snooze expires and the ticket is still unresolved', () => {
+      // The point of the change: acknowledging is a snooze, not a way of making a breach
+      // disappear. An hour later, still breaching and still nobody's finished it.
+      const acked = { ...breaching, ackedThroughCycle: 0, ackedAt: ackedAgo(61) };
+      expect(computeSla(acked, now).alert_active).toBe(true);
+      expect(computeSla(acked, now).snoozed_for_minutes).toBe(null);
+    });
+
+    it('can be snoozed again after it comes back', () => {
+      // Same cycle, acknowledged a second time. The fresh timestamp is what silences it.
+      const reAcked = { ...breaching, ackedThroughCycle: 0, ackedAt: ackedAgo(2) };
+      expect(computeSla(reAcked, now).alert_active).toBe(false);
+    });
+
+    it('treats an acknowledgement with no timestamp as already expired', () => {
+      // Rows acknowledged before acked_at existed. Silent forever was the old behaviour
+      // and is exactly what this change is removing, so they alert.
+      expect(computeSla({ ...breaching, ackedThroughCycle: 0, ackedAt: null }, now).alert_active).toBe(true);
+    });
+
+    it('does not report a snooze on a ticket that is not in trouble', () => {
+      const healthy = { ...base, targetResponseMinutes: 600, ackedThroughCycle: 0, ackedAt: ackedAgo(1) };
+      expect(computeSla(healthy, now).snoozed_for_minutes).toBe(null);
     });
 
     it('comes back when a reopen starts a new cycle', () => {
       // Acknowledged in cycle 0, then the ticket was reopened, taking ack_cycle to 1.
-      const reopened = { ...breaching, ackCycle: 1, ackedThroughCycle: 0 };
+      // Recent enough to still be inside the snooze window, but for the wrong cycle.
+      const reopened = { ...breaching, ackCycle: 1, ackedThroughCycle: 0, ackedAt: ackedAgo(1) };
       expect(computeSla(reopened, now).alert_active).toBe(true);
     });
 

@@ -5,7 +5,7 @@ import type { Ticket, TicketStatus } from '../types';
  * moving to `open` is "Open" from new, "Resume" from pending, and "Reopen" from a ticket
  * that had been finished.
  */
-function label(from: TicketStatus, to: TicketStatus): string {
+export function label(from: TicketStatus, to: TicketStatus): string {
   if (to === 'open') {
     if (from === 'new') return 'Open';
     if (from === 'pending') return 'Resume';
@@ -14,6 +14,22 @@ function label(from: TicketStatus, to: TicketStatus): string {
   if (to === 'pending') return 'Waiting on customer';
   if (to === 'resolved') return 'Resolve';
   return 'Close';
+}
+
+/**
+ * What to say once the move has happened. Kept next to `label` so the button and
+ * the confirmation cannot drift apart: the control that says "Resolve" reports
+ * "Resolved", never "Saved" or "Success".
+ */
+export function pastLabel(from: TicketStatus, to: TicketStatus): string {
+  if (to === 'open') {
+    if (from === 'new') return 'Ticket opened.';
+    if (from === 'pending') return 'Resumed. The response clock is running again.';
+    return 'Reopened.';
+  }
+  if (to === 'pending') return 'Marked as waiting on the customer. The response clock is paused.';
+  if (to === 'resolved') return 'Resolved.';
+  return 'Closed.';
 }
 
 interface Props {
@@ -37,6 +53,7 @@ export function StatusActions({ ticket, busy, onChange }: Props) {
       {ticket.allowed_transitions.map((to) => (
         <button
           key={to}
+          type="button"
           className={`btn${to === 'resolved' ? ' btn-primary' : ''}`}
           disabled={busy}
           onClick={() => onChange(to)}

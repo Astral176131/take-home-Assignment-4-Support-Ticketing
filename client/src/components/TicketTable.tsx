@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
-import { PriorityBadge, SlaBadge, StatusBadge } from './Badges';
+import { PriorityBadge, SlaGauge, StatusBadge } from './Badges';
 import { categoryLabel, timeAgo } from '../lib/format';
+import { useMediaQuery } from '../lib/useMediaQuery';
 import type { SortDirection, TicketListItem, TicketSortField } from '../types';
 
 interface SortableHeaderProps {
@@ -14,10 +15,21 @@ interface SortableHeaderProps {
 function SortableHeader({ field, label, sort, dir, onSort }: SortableHeaderProps) {
   const active = sort === field;
   return (
-    <th>
-      <button className={`sort-header${active ? ' active' : ''}`} onClick={() => onSort(field)}>
+    // aria-sort belongs on the cell, not the button: it tells a screen reader
+    // how the column is currently ordered, which the arrow glyph alone does not.
+    <th aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <button
+        type="button"
+        className={`sort-header${active ? ' active' : ''}`}
+        onClick={() => onSort(field)}
+      >
         {label}
-        {active && <span aria-hidden="true">{dir === 'asc' ? ' ▲' : ' ▼'}</span>}
+        {active && <span aria-hidden="true">{dir === 'asc' ? '▲' : '▼'}</span>}
+        <span className="sr-only">
+          {active
+            ? `, sorted ${dir === 'asc' ? 'ascending' : 'descending'}. Activate to reverse.`
+            : ', not sorted. Activate to sort by this column.'}
+        </span>
       </button>
     </th>
   );
@@ -29,7 +41,7 @@ interface Props {
   sort?: TicketSortField;
   dir?: SortDirection;
   onSort?: (field: TicketSortField) => void;
-  /** Checkboxes appear only when supplied — bulk actions are supervisor-only. */
+  /** Checkboxes appear only when supplied - bulk actions are supervisor-only. */
   selectedIds?: Set<string>;
   onToggleSelect?: (ticketId: string) => void;
   onToggleSelectAll?: () => void;
@@ -39,7 +51,11 @@ interface Props {
  * The queue table, shared by the full queue and the my-tickets view. Both render the same
  * columns from the same payload shape, so there is one definition of what a ticket row
  * looks like rather than two that drift. Sorting and selection are opt-in via props so
- * my-tickets — which offers neither — renders the identical table unchanged.
+ * my-tickets, which offers neither, renders the identical table unchanged.
+ *
+ * Under 640px the same rows are rendered as stacked cards instead. A ten-column
+ * table inside a 288px viewport is unreadable whether or not its scroll is
+ * contained, and horizontal scrolling to read a queue is not a queue.
  */
 export function TicketTable({
   tickets,
@@ -53,9 +69,55 @@ export function TicketTable({
   const selectable = !!(selectedIds && onToggleSelect && onToggleSelectAll);
   const sortable = !!(sort && dir && onSort);
   const allSelected = selectable && tickets.length > 0 && tickets.every((t) => selectedIds!.has(t.id));
+  const narrow = useMediaQuery('(max-width: 639px)');
+
+  if (narrow) {
+    return (
+      <ul className="ticket-cards">
+        {tickets.map((ticket) => (
+          <li key={ticket.id} className="ticket-card">
+            <div className="ticket-card-top">
+              <div>
+                <span className="ticket-key tabular">{ticket.key}</span>
+                <div>
+                  <Link className="ticket-link" to={`/tickets/${ticket.id}`}>
+                    {ticket.subject}
+                  </Link>
+                </div>
+              </div>
+              {selectable && (
+                <label className="ticket-card-select">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${ticket.key}`}
+                    checked={selectedIds!.has(ticket.id)}
+                    onChange={() => onToggleSelect!(ticket.id)}
+                  />
+                </label>
+              )}
+            </div>
+
+            <div className="ticket-card-meta">
+              <StatusBadge status={ticket.status} />
+              <PriorityBadge priority={ticket.priority_code} />
+              <span>{categoryLabel(ticket.category)}</span>
+              <span>{ticket.assignee?.name ?? 'Unassigned'}</span>
+              {ticket.archived_at && <span className="chip chip-archived">Archived</span>}
+            </div>
+
+            <SlaGauge sla={ticket.sla} />
+
+            <span className="muted">Updated {timeAgo(ticket.updated_at)}</span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
 
   return (
-    <div className="table-wrap">
+    // tabindex makes the scroll container reachable from the keyboard; without
+    // it a column that only exists past the right edge cannot be reached at all.
+    <div className="table-wrap" tabIndex={0} role="region" aria-label="Tickets">
       <table className="queue-table">
         <thead>
           <tr>
@@ -101,7 +163,7 @@ export function TicketTable({
                   />
                 </td>
               )}
-              <td className="muted ticket-key">{ticket.key}</td>
+              <td className="ticket-key tabular">{ticket.key}</td>
               <td>
                 <Link className="ticket-link" to={`/tickets/${ticket.id}`}>
                   {ticket.subject}
@@ -118,9 +180,9 @@ export function TicketTable({
               <td>{ticket.requester.name}</td>
               <td>{ticket.assignee?.name ?? <span className="muted">Unassigned</span>}</td>
               <td>
-                <SlaBadge sla={ticket.sla} />
+                <SlaGauge sla={ticket.sla} />
               </td>
-              <td className="muted">{timeAgo(ticket.updated_at)}</td>
+              <td className="muted tabular">{timeAgo(ticket.updated_at)}</td>
             </tr>
           ))}
         </tbody>

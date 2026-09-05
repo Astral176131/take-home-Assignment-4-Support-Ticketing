@@ -4,6 +4,13 @@ import jwt from 'jsonwebtoken';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate } from '../../middleware/auth.js';
 import { cookieOptions, getJwtSecret } from '../../lib/jwt.js';
+import {
+  clearFailures,
+  isThrottled,
+  recordFailure,
+  retryAfterSeconds,
+  throttleKeysFor,
+} from './loginThrottle.js';
 
 const router = Router();
 
@@ -15,10 +22,21 @@ const COOKIE_MAX_AGE = 3600000; // 1 hour in milliseconds
  * Accepts { email, password } and returns user info + sets JWT cookie.
  */
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
-  const { email, password } = req.body;
+  const { email, password } = req.body ?? {};
 
-  if (!email || !password) {
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
     res.status(400).json({ error: 'Email and password are required' });
+    return;
+  }
+
+  // Both keys, so neither spreading guesses across addresses nor hammering one address
+  // slips through. See loginThrottle.ts for why the two limits differ.
+  const throttleKeys = throttleKeysFor(req.ip ?? 'unknown', email);
+
+  if (isThrottled(throttleKeys)) {
+    const retryAfter = retryAfterSeconds(throttleKeys);
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).json({ error: 'Too many failed sign-in attempts. Try again later.' });
     return;
   }
 
@@ -28,6 +46,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
     if (!user) {
       // Don't reveal whether the email exists
+      recordFailure(throttleKeys);
       res.status(401).json({ error: 'Invalid email or password' });
       return;
     }
@@ -36,9 +55,14 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     const isValid = await bcrypt.compare(password, user.passwordHash);
 
     if (!isValid) {
+      recordFailure(throttleKeys);
       res.status(401).json({ error: 'Invalid email or password' });
       return;
     }
+
+    // A correct password clears the counter, so a person who mistypes a few times and then
+    // gets it right is not left throttled.
+    clearFailures(throttleKeys);
 
     // Create JWT
     const token = jwt.sign(

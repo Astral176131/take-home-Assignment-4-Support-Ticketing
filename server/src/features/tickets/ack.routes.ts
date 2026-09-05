@@ -4,6 +4,7 @@ import { authenticate, requireTicketAccess } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { computeSla } from './sla.js';
 import { ticketPayload } from './detail.js';
+import { ConcurrentChange, guardedUpdate, isConcurrentChange } from './concurrency.js';
 
 const router = Router();
 
@@ -52,6 +53,7 @@ router.post(
       targetResponseMinutes: ticket.priority.targetResponseMinutes,
       ackCycle: ticket.ackCycle,
       ackedThroughCycle: ticket.ackedThroughCycle,
+      ackedAt: ticket.ackedAt,
     });
 
     if (!sla.alert_active) {
@@ -59,15 +61,41 @@ router.post(
       return;
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.ticket.update({ where: { id: ticket.id }, data: { ackedThroughCycle: ticket.ackCycle } });
-      await writeEvent(tx, {
-        ticketId: ticket.id,
-        eventType: 'sla_ack',
-        actorId: actor.userId,
-        newValue: String(ticket.ackCycle),
+    // Conditional on nothing else having acknowledged this same alert in the meantime.
+    // Two clicks at once would otherwise both succeed and stamp two `sla_ack` rows onto a
+    // timeline that cannot be corrected afterwards.
+    //
+    // The guard matches on `acked_at` rather than on the cycle alone, because an alert can
+    // now legitimately be acknowledged more than once per cycle: the snooze expires and
+    // the same ticket alerts again. Matching the timestamp we read still rejects the
+    // genuine double-submit, since the first writer moves it.
+    try {
+      await prisma.$transaction(async (tx) => {
+        const won = await guardedUpdate(
+          tx,
+          {
+            id: ticket.id,
+            ackCycle: ticket.ackCycle,
+            ackedAt: ticket.ackedAt,
+          },
+          { ackedThroughCycle: ticket.ackCycle, ackedAt: new Date() }
+        );
+        if (!won) throw new ConcurrentChange('There is no active alert to acknowledge on this ticket');
+
+        await writeEvent(tx, {
+          ticketId: ticket.id,
+          eventType: 'sla_ack',
+          actorId: actor.userId,
+          newValue: String(ticket.ackCycle),
+        });
       });
-    });
+    } catch (err) {
+      if (isConcurrentChange(err)) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
 
     res.json((await ticketPayload(ticket.id, actor.role))!);
   }

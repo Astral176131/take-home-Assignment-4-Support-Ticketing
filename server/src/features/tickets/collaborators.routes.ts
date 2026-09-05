@@ -1,8 +1,11 @@
 import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate, requireRole } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { ticketPayload } from './detail.js';
+import { ConcurrentChange, isConcurrentChange } from './concurrency.js';
+import { validateCollaboratorTarget } from './collaboratorRules.js';
 
 const router = Router();
 
@@ -42,15 +45,11 @@ router.post(
       return;
     }
 
-    const agent = await prisma.user.findUnique({ where: { id: agentId } });
-    if (!agent) {
-      res.status(400).json({ error: 'Unknown user' });
-      return;
-    }
     // Only agents are ever attached to a ticket: a supervisor already sees everything, so
     // a row naming one would grant nothing and clutter the collaborator list.
-    if (agent.role !== 'agent') {
-      res.status(400).json({ error: 'Only agents can be added as collaborators' });
+    const targetCheck = await validateCollaboratorTarget(agentId);
+    if (!targetCheck.ok) {
+      res.status(400).json({ error: targetCheck.error });
       return;
     }
 
@@ -62,15 +61,27 @@ router.post(
       return;
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.ticketCollaborator.create({ data: { ticketId: ticket.id, agentId } });
-      await writeEvent(tx, {
-        ticketId: ticket.id,
-        eventType: 'collaborator_added',
-        actorId: actor.userId,
-        newValue: agentId,
+    // The check above and this insert are two statements, so two simultaneous requests can
+    // both pass the check. The composite primary key still stops the duplicate row, but the
+    // loser surfaced that as an unhandled 500 rather than the 409 the sequential path gives
+    // for exactly the same situation. Caught here so both orderings answer the same way.
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.ticketCollaborator.create({ data: { ticketId: ticket.id, agentId } });
+        await writeEvent(tx, {
+          ticketId: ticket.id,
+          eventType: 'collaborator_added',
+          actorId: actor.userId,
+          newValue: agentId,
+        });
       });
-    });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        res.status(409).json({ error: 'That agent is already a collaborator on this ticket' });
+        return;
+      }
+      throw err;
+    }
 
     res.status(201).json((await ticketPayload(ticket.id, actor.role))!);
   }
@@ -94,17 +105,31 @@ router.delete(
 
     // Removal is absolute: unless they are also the assignee, the agent is refused on their
     // very next request. There is no residual read-only state — see decision 10.
-    await prisma.$transaction(async (tx) => {
-      await tx.ticketCollaborator.delete({
-        where: { ticketId_agentId: { ticketId: id, agentId } },
+    //
+    // deleteMany rather than delete, for the same reason every other route here guards its
+    // write: two simultaneous removals would otherwise have one succeed and one throw, and
+    // both would write a `collaborator_removed` row for a single removal.
+    try {
+      await prisma.$transaction(async (tx) => {
+        const { count } = await tx.ticketCollaborator.deleteMany({
+          where: { ticketId: id, agentId },
+        });
+        if (count === 0) throw new ConcurrentChange('That agent is not a collaborator on this ticket');
+
+        await writeEvent(tx, {
+          ticketId: id,
+          eventType: 'collaborator_removed',
+          actorId: actor.userId,
+          newValue: agentId,
+        });
       });
-      await writeEvent(tx, {
-        ticketId: id,
-        eventType: 'collaborator_removed',
-        actorId: actor.userId,
-        newValue: agentId,
-      });
-    });
+    } catch (err) {
+      if (isConcurrentChange(err)) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
 
     res.json((await ticketPayload(id, actor.role))!);
   }

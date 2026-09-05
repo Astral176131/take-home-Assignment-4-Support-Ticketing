@@ -1,47 +1,48 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
-import { PriorityBadge, SlaBadge, StatusBadge } from '../components/Badges';
-import { useAuth } from '../context/AuthContext';
-import type { Paged, TicketListItem } from '../types';
+import { PriorityBadge, SlaGauge, StatusBadge } from '../components/Badges';
+import { useAlerts } from '../context/AlertsContext';
+import { usePageMeta } from '../lib/usePageMeta';
 
 /**
- * Sorted most-severe-first by the server already — this page renders that order as given
+ * Sorted most-severe-first by the server already, so this page renders that order as given
  * rather than re-sorting, so there is one definition of "most severe" for the whole app.
+ *
+ * The alerts themselves come from the shared context rather than a fetch of this page's
+ * own, so acknowledging one here updates the nav badge at the same moment it disappears
+ * from this table. The two used to be separate copies of the same list, and only this one
+ * knew it had changed.
  */
 export function AlertsPage() {
-  const { user } = useAuth();
-  const [alerts, setAlerts] = useState<TicketListItem[]>([]);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const { items: alerts, acknowledged, loading, error, refresh } = useAlerts();
+  const [ackError, setAckError] = useState('');
+  const [ackNotice, setAckNotice] = useState('');
   const [ackingId, setAckingId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const data = await api.get<Paged<TicketListItem>>('/api/alerts');
-      setAlerts(data.items);
-      setError('');
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load alerts');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  usePageMeta(
+    'Alerts',
+    'Every ticket that is past its response target or close to breaching it, listed most severe first, each with a single action to acknowledge and silence it.'
+  );
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  async function acknowledge(ticketId: string) {
+  async function acknowledge(ticketId: string, key: string) {
     setAckingId(ticketId);
-    setError('');
+    setAckError('');
+    setAckNotice('');
     try {
       await api.post(`/api/tickets/${ticketId}/alerts/ack`);
-      // Reload rather than filter locally — acknowledging can change more than just this
+      // Refetch rather than filter locally: acknowledging can change more than just this
       // ticket's own visibility (e.g. a supervisor's list is a superset of an agent's).
-      await load();
+      await refresh();
+      // The row disappearing is the only other signal that anything happened,
+      // and a row vanishing reads as easily like a bug as like success.
+      setAckNotice(`${key} acknowledged. It stays silent until the ticket is reopened.`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not acknowledge this alert');
+      setAckError(
+        err instanceof ApiError
+          ? `${key} could not be acknowledged. ${err.message}`
+          : `${key} could not be acknowledged. Check your connection, then try again.`
+      );
     } finally {
       setAckingId(null);
     }
@@ -52,24 +53,63 @@ export function AlertsPage() {
       <header className="page-header">
         <div>
           <h2>Alerts</h2>
-          <p className="page-subtitle">
-            {user?.role === 'supervisor'
-              ? 'Every ticket currently breaching or close to breaching its response target'
-              : 'Your tickets currently breaching or close to breaching their response target'}
-          </p>
         </div>
       </header>
 
-      {error && <div className="error-message">{error}</div>}
+      {/* Two different failures: the list could not be loaded, or one acknowledgement was
+          refused. Keeping them apart means a refused ack does not read as a broken page. */}
+      {error && (
+        <div className="error-message" role="alert">
+          {error}
+        </div>
+      )}
+      {ackError && (
+        <div className="error-message" role="alert">
+          {ackError}
+        </div>
+      )}
+      {ackNotice && (
+        <div className="success-message" role="status">
+          {ackNotice}
+        </div>
+      )}
 
       {loading ? (
-        <p className="muted">Loading…</p>
+        <>
+          <div className="skeleton-list" aria-hidden="true">
+            <div className="skeleton" />
+            <div className="skeleton" />
+            <div className="skeleton" />
+          </div>
+          <p className="sr-only" role="status">
+            Loading alerts
+          </p>
+        </>
       ) : alerts.length === 0 ? (
         <div className="empty-state">
-          <p>No active alerts. Everything is within its response target.</p>
+          {/* Two different empty states. "Everything is within target" is only true
+              when nothing has been silenced; said unconditionally it contradicts the
+              dashboard's breaching count, which ignores acknowledgement. The reason
+              the two numbers differ is explained on the dashboard tile itself, so it
+              is not repeated here. */}
+          {acknowledged > 0 ? (
+            <>
+              <h3>Nothing needs attention right now</h3>
+              <p>
+                {acknowledged === 1
+                  ? '1 acknowledged ticket is still past its target. It stays quiet unless the ticket is reopened.'
+                  : `${acknowledged} acknowledged tickets are still past their targets. They stay quiet unless those tickets are reopened.`}
+              </p>
+            </>
+          ) : (
+            <>
+              <h3>No active alerts</h3>
+              <p>Everything is within its response target.</p>
+            </>
+          )}
         </div>
       ) : (
-        <div className="table-wrap">
+        <div className="table-wrap" tabIndex={0} role="region" aria-label="Alerts">
           <table className="queue-table">
             <thead>
               <tr>
@@ -79,13 +119,15 @@ export function AlertsPage() {
                 <th>Priority</th>
                 <th>Assignee</th>
                 <th>Response</th>
-                <th />
+                <th>
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {alerts.map((alert) => (
                 <tr key={alert.id}>
-                  <td className="muted ticket-key">{alert.key}</td>
+                  <td className="ticket-key tabular">{alert.key}</td>
                   <td>
                     <Link className="ticket-link" to={`/tickets/${alert.id}`}>
                       {alert.subject}
@@ -99,13 +141,13 @@ export function AlertsPage() {
                   </td>
                   <td>{alert.assignee?.name ?? <span className="muted">Unassigned</span>}</td>
                   <td>
-                    <SlaBadge sla={alert.sla} />
+                    <SlaGauge sla={alert.sla} />
                   </td>
                   <td>
                     <button
                       className="btn ack-btn"
                       disabled={ackingId === alert.id}
-                      onClick={() => acknowledge(alert.id)}
+                      onClick={() => acknowledge(alert.id, alert.key)}
                     >
                       {ackingId === alert.id ? 'Acknowledging…' : 'Acknowledge'}
                     </button>

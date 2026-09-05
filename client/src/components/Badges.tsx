@@ -29,29 +29,43 @@ export function PriorityBadge({ priority }: { priority: Priority }) {
 }
 
 /**
- * Where a ticket stands against its response target. Breach and warning are decided
- * server-side; this only picks how to say it.
+ * How far a ticket has run against its response target, drawn as a runway that
+ * fills as the clock does.
+ *
+ * This is the one element on the page given real visual weight, because it is
+ * the one question the product exists to answer: the brief asks that anyone be
+ * able to see what is about to breach "without scanning every open ticket by
+ * hand". As a pill it sat among three other pills in the row and read as just
+ * another field. As a bar it makes a column of risk scannable as a shape.
+ *
+ * Breach and warning are decided server-side; this only picks how to say it.
+ * The state is in the text as well as the colour, so it never depends on hue.
  */
-export function SlaBadge({ sla }: { sla: Sla }) {
-  if (sla.breached) {
-    return (
-      <span className="chip chip-sla chip-sla-breached" title="Past its response target">
-        Breached by {duration(-sla.remaining_minutes)}
-      </span>
-    );
-  }
+export function SlaGauge({ sla, lead = false }: { sla: Sla; lead?: boolean }) {
+  const tone = sla.breached ? 'breached' : sla.warning ? 'warning' : 'ok';
 
-  if (sla.warning) {
-    return (
-      <span className="chip chip-sla chip-sla-warning" title="Close to its response target">
-        {duration(sla.remaining_minutes)} left
-      </span>
-    );
-  }
+  const text = sla.breached
+    ? `Breached by ${duration(-sla.remaining_minutes)}`
+    : `${duration(sla.remaining_minutes)} left`;
+
+  // Elapsed against target, clamped. A breached ticket shows a full runway
+  // rather than one that overflows its own track.
+  const fraction = sla.target_minutes > 0
+    ? Math.min(1, Math.max(0.02, sla.elapsed_minutes / sla.target_minutes))
+    : 1;
+
+  const title = sla.breached
+    ? 'Past its response target'
+    : sla.warning
+      ? 'Close to its response target'
+      : 'Within its response target';
 
   return (
-    <span className="chip chip-sla chip-sla-ok" title="Within its response target">
-      {duration(sla.remaining_minutes)} left
-    </span>
+    <div className={`sla sla-${tone}${lead ? ' sla-lead' : ''}`} title={title}>
+      <span className="sla-track" aria-hidden="true">
+        <span className="sla-fill" style={{ transform: `scaleX(${sla.breached ? 1 : fraction})` }} />
+      </span>
+      <span className="sla-text">{text}</span>
+    </div>
   );
 }

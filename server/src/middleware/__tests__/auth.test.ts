@@ -138,14 +138,20 @@ describe('Authorization Middleware', () => {
       expect(result.allowed).toBe(false);
     });
 
-    it('should return not found for non-existent ticket', async () => {
-      const result = await checkTicketAccess(
+    it('gives a non-existent ticket the same answer as one that is not yours', async () => {
+      // Deliberately indistinguishable. Saying "not found" here and "no access" for a real
+      // ticket would let any agent probe which ticket ids exist, and the caller can act on
+      // neither case, so the distinction is all leak and no use.
+      const missing = await checkTicketAccess(
         '00000000-0000-0000-0000-000000000000',
         assigneeAgentId,
         'agent'
       );
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toBe('Ticket not found');
+      const notMine = await checkTicketAccess(ticketId, unrelatedAgentId, 'agent');
+
+      expect(missing.allowed).toBe(false);
+      expect(missing.reason).toBe('You do not have access to this ticket');
+      expect(missing.reason).toBe(notMine.reason);
     });
   });
 

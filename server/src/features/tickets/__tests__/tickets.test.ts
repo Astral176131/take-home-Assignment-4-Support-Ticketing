@@ -477,6 +477,40 @@ describe('Ticket routes', () => {
 
       expect(res.status).toBe(403);
     });
+
+    it('refuses an edit on an archived ticket, as every other mutation does', async () => {
+      const created = await createTicket(agentACookie, { assignee_id: agentAId });
+      const id = created.body.id;
+      await request.post(`/api/tickets/${id}/archive`).set('Cookie', agentACookie);
+
+      const res = await request
+        .patch(`/api/tickets/${id}`)
+        .set('Cookie', agentACookie)
+        .send({ subject: 'Edited while archived' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain('archived');
+
+      // Field edits write no history row, so a successful edit here would have rewritten
+      // an archived ticket with nothing on the timeline recording it.
+      const read = await request.get(`/api/tickets/${id}`).set('Cookie', agentACookie);
+      expect(read.body.subject).toBe(created.body.subject);
+    });
+
+    it('lets the edit through again once the ticket is restored', async () => {
+      const created = await createTicket(agentACookie, { assignee_id: agentAId });
+      const id = created.body.id;
+      await request.post(`/api/tickets/${id}/archive`).set('Cookie', agentACookie);
+      await request.post(`/api/tickets/${id}/restore`).set('Cookie', agentACookie);
+
+      const res = await request
+        .patch(`/api/tickets/${id}`)
+        .set('Cookie', agentACookie)
+        .send({ subject: 'Edited after restoring' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.subject).toBe('Edited after restoring');
+    });
   });
 
   describe('archive and restore', () => {

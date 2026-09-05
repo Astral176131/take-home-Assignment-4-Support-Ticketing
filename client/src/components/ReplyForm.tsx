@@ -3,7 +3,7 @@ import { useState } from 'react';
 interface Props {
   busy: boolean;
   // Reports whether the reply actually went through, so a failed submit can leave what
-  // was typed in place instead of discarding it — losing a long reply to a transient
+  // was typed in place instead of discarding it. Losing a long reply to a transient
   // error is worse than making the agent clear the box themselves.
   onSubmit: (reply: {
     body: string;
@@ -42,6 +42,7 @@ export function ReplyForm({ busy, onSubmit }: Props) {
       <textarea
         id="reply-body"
         rows={4}
+        autoComplete="off"
         value={body}
         placeholder={fromCustomer ? "Paste the customer's email…" : 'Write a reply…'}
         onChange={(e) => setBody(e.target.value)}
