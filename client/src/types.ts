@@ -27,6 +27,12 @@ export interface Dashboard {
   by_status: Record<TicketStatus, number>;
   by_agent: { agent: Person; count: number }[];
   resolved_per_week: { week_start: string; count: number }[];
+  mine: {
+    open_count: number;
+    pending_count: number;
+    resolved_this_week: number;
+    breaching_count: number;
+  };
 }
 
 /** GET /api/dashboard/week — one week's resolutions, day by day and by agent. */

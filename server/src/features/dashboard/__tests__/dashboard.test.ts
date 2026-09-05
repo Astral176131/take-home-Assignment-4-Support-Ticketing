@@ -35,6 +35,7 @@ interface Dashboard {
   by_status: Record<string, number>;
   by_agent: { agent: { id: string; name: string }; count: number }[];
   resolved_per_week: { week_start: string; count: number }[];
+  mine: { open_count: number; pending_count: number; resolved_this_week: number; breaching_count: number };
 }
 
 async function upsertUser(email: string, name: string, role: 'agent' | 'supervisor') {
@@ -160,6 +161,22 @@ describe('GET /api/dashboard', () => {
 
     expect(agentCount(after, agentAId) - agentCount(before, agentAId)).toBe(2);
     expect(agentCount(after, agentBId) - agentCount(before, agentBId)).toBe(1);
+  });
+
+  it("scopes the 'mine' row to whoever is asking, not the whole queue", async () => {
+    const before = await request.get('/api/dashboard').set('Cookie', agentACookie);
+
+    const ownTicket = await createTicket({ assignee_id: agentAId });
+    await request.post(`/api/tickets/${ownTicket.body.id}/status`).set('Cookie', agentACookie).send({ status: 'open' });
+    // Belongs to agent B, not A — must not count toward A's own row.
+    const othersTicket = await createTicket({ assignee_id: agentBId });
+    await request.post(`/api/tickets/${othersTicket.body.id}/status`).set('Cookie', supervisorCookie).send({ status: 'open' });
+
+    const after = await request.get('/api/dashboard').set('Cookie', agentACookie);
+
+    expect(after.body.mine.open_count - before.body.mine.open_count).toBe(1);
+    // The shared, unscoped open_count reflects both tickets, unlike the personal row.
+    expect(after.body.open_count - before.body.open_count).toBe(2);
   });
 
   it('counts a ticket as breaching only while it is still in progress', async () => {

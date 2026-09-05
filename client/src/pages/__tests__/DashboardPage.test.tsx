@@ -55,6 +55,7 @@ function dashboard(overrides: Partial<Dashboard> = {}): Dashboard {
     resolved_this_week: 5,
     breaching_count: 1,
     unassigned_count: 3,
+    mine: { open_count: 2, pending_count: 1, resolved_this_week: 3, breaching_count: 1 },
     by_status: { new: 1, open: 4, pending: 2, resolved: 5, closed: 3 },
     by_agent: [
       { agent: { id: 'u1', name: 'Alice' }, count: 6 },
@@ -88,8 +89,26 @@ describe('DashboardPage', () => {
     // "Open" appears twice (the stat tile and the status breakdown), so wait on the
     // unambiguous heading instead.
     await screen.findByText('By status');
-    const tiles = document.querySelectorAll('.stat-value');
+    // Scoped to the first strip: a second one ("Your tickets") exists now too.
+    const tiles = document.querySelectorAll('.stat-strip')[0].querySelectorAll('.stat-value');
     expect(Array.from(tiles).map((t) => t.textContent)).toEqual(['4', '2', '5', '3', '1']);
+  });
+
+  it("shows the viewer's own open, pending, resolved and breaching counts in a second row", async () => {
+    route(dashboard());
+    renderPage();
+
+    await screen.findByText('By status');
+    const strips = document.querySelectorAll('.stat-strip');
+    expect(strips).toHaveLength(2);
+    const tiles = strips[1].querySelectorAll('.stat-value');
+    expect(Array.from(tiles).map((t) => t.textContent)).toEqual(['2', '1', '3', '1']);
+
+    // "Open the list" is the default link text for more than one tile in this strip, so
+    // find the specific tile by its label first, then the link inside just that tile.
+    const openTile = within(strips[1] as HTMLElement).getByText('Open').closest('.stat-item');
+    const openLink = within(openTile as HTMLElement).getByRole('link');
+    expect(openLink).toHaveAttribute('href', '/my-tickets?status=open');
   });
 
   it('breaks tickets down by status and by agent', async () => {

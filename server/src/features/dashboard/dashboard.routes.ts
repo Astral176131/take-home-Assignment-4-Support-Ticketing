@@ -34,13 +34,32 @@ const WEEKS = 8;
  * separately, excludes anything already resolved or closed: there is nothing left to act
  * on once a ticket's response has already happened.
  */
-router.get('/', async (_req: Request, res: Response): Promise<void> => {
+router.get('/', async (req: Request, res: Response): Promise<void> => {
+  const actor = req.user!;
   const weekStarts = lastNWeekStarts(WEEKS);
+  const thisWeekStart = weekStarts[weekStarts.length - 1];
+
+  // The same "assignee or collaborator" scope /api/tickets/mine uses — a personal row
+  // underneath the shared one above, for whoever is looking regardless of role. A
+  // supervisor's own numbers are usually near zero, since they become an assignee only
+  // through reassignment or escalation (decision 4), not at creation.
+  const mine: Prisma.TicketWhereInput = {
+    OR: [{ assigneeId: actor.userId }, { collaborators: { some: { agentId: actor.userId } } }],
+  };
 
   // Issued together rather than one after another. They do not depend on each other, and
   // this is the landing page — run sequentially against a hosted database each one pays
   // its own round trip, which was most of the endpoint's response time.
-  const [statusCounts, agentCounts, weekRows, inProgress, unassignedCount] = await Promise.all([
+  const [
+    statusCounts,
+    agentCounts,
+    weekRows,
+    inProgress,
+    unassignedCount,
+    myStatusCounts,
+    myResolvedThisWeek,
+    myInProgress,
+  ] = await Promise.all([
     prisma.ticket.groupBy({
       by: ['status'],
       where: { archivedAt: null },
@@ -64,6 +83,15 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
     // on the ticket itself; it just isn't what "currently breaching" means on a dashboard).
     findInProgressTickets(),
     prisma.ticket.count({ where: { archivedAt: null, assigneeId: null } }),
+    prisma.ticket.groupBy({
+      by: ['status'],
+      where: { archivedAt: null, ...mine },
+      _count: true,
+    }),
+    prisma.ticket.count({
+      where: { archivedAt: null, resolvedAt: { gte: thisWeekStart }, ...mine },
+    }),
+    findInProgressTickets(mine),
   ]);
 
   const byStatus: Record<string, number> = Object.fromEntries(API_STATUSES.map((s) => [s, 0]));
@@ -97,6 +125,12 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
   // supervisor's count should not go quiet just because an agent silenced their own alert.
   const breachingCount = inProgress.filter((t) => t.sla.breached).length;
 
+  const myByStatus: Record<string, number> = Object.fromEntries(API_STATUSES.map((s) => [s, 0]));
+  for (const row of myStatusCounts) {
+    myByStatus[STATUS_TO_API[row.status]] = row._count;
+  }
+  const myBreachingCount = myInProgress.filter((t) => t.sla.breached).length;
+
   res.json({
     open_count: byStatus.open,
     pending_count: byStatus.pending,
@@ -106,6 +140,12 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
     by_status: byStatus,
     by_agent: byAgent,
     resolved_per_week: resolvedPerWeek,
+    mine: {
+      open_count: myByStatus.open,
+      pending_count: myByStatus.pending,
+      resolved_this_week: myResolvedThisWeek,
+      breaching_count: myBreachingCount,
+    },
   });
 });
 

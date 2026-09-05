@@ -180,6 +180,25 @@ export function DashboardPage() {
         ]}
       />
 
+      {/* Everyone's own standing, underneath the shared numbers above — a supervisor's
+          row is usually near-empty, since they hold a ticket only by taking it over
+          (decision 4), not by default the way an agent does. */}
+      <h3 className="dashboard-section-heading">Your tickets</h3>
+      <StatStrip
+        items={[
+          { label: 'Open', value: data.mine.open_count, to: '/my-tickets?status=open' },
+          { label: 'Pending on customer', value: data.mine.pending_count, to: '/my-tickets?status=pending' },
+          { label: 'Resolved this week', value: data.mine.resolved_this_week },
+          {
+            label: 'Breaching',
+            value: data.mine.breaching_count,
+            to: '/my-tickets?breaching=true',
+            lead: true,
+            linkLabel: 'Open the list',
+          },
+        ]}
+      />
+
       <div className="dashboard-grid">
         <section className="dashboard-panel">
           <h3>By status</h3>

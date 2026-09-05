@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 
 export interface Stat {
@@ -24,7 +25,12 @@ export interface Stat {
  */
 export function StatStrip({ items }: { items: Stat[] }) {
   return (
-    <div className="stat-strip">
+    // The column count comes from the data rather than a hardcoded number in CSS: two
+    // different-length strips exist now (the shared headline row, and a personal one), and
+    // a mismatch between how many tiles there are and how many columns the grid has is
+    // exactly what left a tile stranded alone on its own row the last time this drifted.
+    <div className="stat-strip" style={{ '--stat-count': items.length } as CSSProperties}>
+
       {items.map((item) => (
         <div key={item.label} className={`stat-item${item.lead ? ' stat-item-lead' : ''}`}>
           <span className="stat-value">{item.value}</span>

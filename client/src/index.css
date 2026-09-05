@@ -1164,7 +1164,7 @@ textarea {
 
 @media (min-width: 700px) {
   .stat-strip {
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(var(--stat-count, 4), 1fr);
   }
 
   .stat-item {
@@ -1239,6 +1239,14 @@ textarea {
   font-size: var(--text-sm);
   color: var(--ink);
   margin-bottom: var(--space-4);
+}
+
+/* Labels the second stat-strip ("Your tickets") the same way a page-header h2 reads,
+   since it sits between two strips rather than inside a bordered panel of its own. */
+.dashboard-section-heading {
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  margin: 0 0 var(--space-3);
 }
 
 .bar-list {
