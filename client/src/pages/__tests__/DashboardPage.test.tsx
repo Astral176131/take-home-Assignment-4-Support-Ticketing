@@ -182,6 +182,34 @@ describe('DashboardPage', () => {
     expect(screen.getAllByText('Unassigned').length).toBeGreaterThan(0);
   });
 
+  it('links the shared Open/Pending/Breaching tiles for a supervisor, not an agent — but always links the personal row', async () => {
+    // Inherited 'agent' from the test above (this file has no beforeEach; see the note
+    // above the describe block).
+    route(dashboard());
+    const asAgent = renderPage();
+
+    await screen.findByText('By status');
+    const strips = document.querySelectorAll('.stat-strip');
+    const sharedStrip = strips[0];
+    const mineStrip = strips[1];
+    // An agent's own /tickets and /alerts views are scoped to their own work regardless
+    // of the URL, so a link here would land on a smaller list than the shared number just
+    // shown — the tile stays a plain number instead of making that promise.
+    expect(within(sharedStrip as HTMLElement).queryByRole('link')).not.toBeInTheDocument();
+    // The personal row underneath is already scoped to this agent, so its links are honest
+    // regardless of role and stay present.
+    expect(within(mineStrip as HTMLElement).getAllByRole('link').length).toBeGreaterThan(0);
+    asAgent.unmount();
+
+    role = 'supervisor';
+    route(dashboard());
+    renderPage();
+
+    await screen.findByText('By status');
+    const sharedStripAsSupervisor = document.querySelectorAll('.stat-strip')[0];
+    expect(within(sharedStripAsSupervisor as HTMLElement).getAllByRole('link').length).toBeGreaterThan(0);
+  });
+
   it('drills into a clicked week, then returns to the 8-week view', async () => {
     const detail: WeekDetail = {
       week_start: '2026-08-31',

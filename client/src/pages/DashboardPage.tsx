@@ -155,8 +155,21 @@ export function DashboardPage() {
           describe the queue, that one is a thing somebody has to go and do. */}
       <StatStrip
         items={[
-          { label: 'Open', value: data.open_count, to: '/tickets?status=open' },
-          { label: 'Pending on customer', value: data.pending_count, to: '/tickets?status=pending' },
+          {
+            label: 'Open',
+            value: data.open_count,
+            // This count and /alerts's own scope are queue-wide; an agent's own queue
+            // view is scoped to their own tickets regardless of the URL's filter, so the
+            // link behind this number would land on a smaller list than the number just
+            // shown — the exact dishonesty this component's own docs warn against. A
+            // supervisor's queue view is genuinely unscoped, so the link is honest there.
+            ...(isSupervisor ? { to: '/tickets?status=open' } : {}),
+          },
+          {
+            label: 'Pending on customer',
+            value: data.pending_count,
+            ...(isSupervisor ? { to: '/tickets?status=pending' } : {}),
+          },
           { label: 'Resolved this week', value: data.resolved_this_week },
           {
             label: 'Unassigned',
@@ -168,8 +181,8 @@ export function DashboardPage() {
           {
             label: 'Breaching',
             value: data.breaching_count,
-            to: '/alerts',
             lead: true,
+            ...(isSupervisor ? { to: '/alerts' } : {}),
             ...(activeAlerts > 0
               ? { linkLabel: `Work through ${activeAlerts} still unacknowledged` }
               : {
