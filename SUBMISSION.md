@@ -1,39 +1,14 @@
 # Submission
 
-Fill this in and commit it. This is the first file we open.
-
 ## Links
 
-- **GitHub repository:** https://github.com/Astral176131/take-home-Assignment-4-Support-Ticketing
-- **Live application:** https://take-home-assignment-4-support-tick.vercel.app
+- **GitHub:** https://github.com/Astral176131/take-home-Assignment-4-Support-Ticketing
+- **Live app:** https://take-home-assignment-4-support-tick.vercel.app
+- **API:** https://take-home-assignment-4-support-ticketing-f3wf.onrender.com
 
-## Notes for the reviewer
-
-**The API sleeps.** It runs on Render's free tier and spins down after 15 minutes of
-inactivity. The first request after that takes 30–60 seconds while the container wakes. A slow
-first sign-in is that, not a broken deployment. Everything after it is fast.
-
-**Where the thinking is.** This file is deliberately short. The reasoning lives in `docs/`:
-
-- `docs/decisions.md` — 15 decisions, each with what was rejected and why. Decisions 3, 9, 10
-  and 12 are the ones where I knowingly departed from the brief; decision 9 is one I reversed.
-- `docs/architecture.md` — the moving pieces, one request traced end to end, and what I
-  deliberately didn't build.
-- `docs/schema.md` — every table, which constraints live in the database versus the
-  application, and what breaks first at 100× the data.
-- `docs/plan.md` — how the work actually split across sessions, estimates versus reality.
-
-**Mobile was broken until late.** The client and API sit on different domains, which made the
-session cookie third-party. Desktop Chrome kept it; iOS Safari discarded it outright, so
-sign-in appeared to succeed and every subsequent request came back "Authentication required."
-The fix was to proxy `/api/*` through the client's own origin so the cookie is first-party
-(`docs/decisions.md`, decision 15). Worth knowing because it's the kind of bug that only exists
-once something is genuinely deployed.
-
-**Two deviations from the brief you'll notice immediately**, both argued in `decisions.md`:
-collaborator management is supervisor-only rather than open to the assignee (decision 3), and
-the alerts list includes tickets you collaborate on rather than only ones assigned to you
-(decision 12).
+The API runs on Render's free tier and sleeps after 15 minutes of inactivity. The first
+request after that takes 30–60 seconds — that is the host waking up, not a broken
+deployment.
 
 ## Demo credentials
 
@@ -42,97 +17,149 @@ the alerts list includes tickets you collaborate on rather than only ones assign
 | Supervisor | supervisor1@example.com | super123 |
 | Agent | agent1@example.com | agent123 |
 
-There are six seeded accounts in total — `supervisor2@example.com` / `super456`, and
-`agent2@example.com` / `agent456` through `agent4@example.com` / `agent101`. Signing in as
-different agents is the quickest way to see the authorization rules do something: an agent sees
-only their own tickets in the queue, and gets a 403 from any ticket they don't hold.
+Additional accounts: `supervisor2@example.com` / `super456`, `agent2@example.com` /
+`agent456` through `agent4@example.com` / `agent101`. Signing in as different agents
+is the quickest way to verify the authorization rules — an agent sees only their own
+tickets, and gets a 403 from any ticket they don't hold.
 
-## Stack
+## What I built
 
-| Layer | What you used | Why |
-|-------|---------------|-----|
-| Frontend | React 19 + TypeScript, Vite, React Router 7 | A plain SPA against a JSON API keeps "where does a rule live" unambiguous — never the frontend. No server-rendering requirement here to justify Next.js, and Vite's dev server kept the feedback loop fast. |
-| Backend | Express 5 + TypeScript, Prisma 7 (`@prisma/adapter-pg`) | Express is minimal and unopinionated, so the state machine and authorization rules are plain functions rather than framework machinery. Prisma gave typed queries against a schema that changed constantly; the driver adapter is Prisma 7's requirement, not a preference. |
-| Database | Postgres on Supabase, plus a second Supabase project for tests | The data is relational and the constraints matter — a unique index on `requesters.email` is what turned a silent data-corruption race into a loud, recoverable conflict. Tests run against real Postgres in their own project so they can create and delete freely and assert exact dashboard counts. |
-| Hosting | Vercel (client), Render (API), Supabase (database) | Three free tiers, deployed in dependency order: database first, then the API with its connection string, then the client pointed at the API. Vercel also proxies `/api/*` to Render so the session cookie stays first-party. |
+A support ticketing system with a five-state lifecycle (`new → open → pending → resolved
+→ closed`), role-based access for agents and supervisors, SLA tracking with breach alerts,
+and a dashboard with aggregate analytics.
 
-## Goal checklist
+**Architecture:** React 19 SPA (Vite) against an Express 5 JSON API, backed by Postgres
+via Prisma 7. The frontend holds no business rules — every authorization check, state
+transition, and SLA computation is enforced server-side. Auth is a JWT in an `httpOnly`
+cookie, with the API proxied through the client's origin to keep the cookie first-party
+across all browsers.
 
-Mark each honestly. Partial is fine — say what is partial.
+Full architecture details in `docs/architecture.md`; the database design in
+`docs/schema.md`.
 
-| # | Goal | Status | Notes |
-|---|------|--------|-------|
-| 1 | Accounts and roles | Done | Email + password, JWT in an `httpOnly` cookie. Every rule is enforced server-side; `authorization.test.ts` asserts, route by route, that the disallowed actor is refused with the right status code. Agents cannot reassign away from themselves. |
-| 2 | Tickets | Done | Create, edit, archive, restore. Archived tickets leave every default view but keep their history and stay readable; every mutation on one is refused with a 409. |
-| 3 | Replies inside tickets | Done | Body, author, timestamp, and an internal-note flag. Internal notes are always returned flagged and rendered distinctly rather than filtered out — one code path, so a filter bug can't leak one to a customer. |
-| 4 | Ticket lifecycle | Done | Full state machine with the pending clock pause, customer-reply auto-reopen, and a 7-day reopen window. Illegal moves are refused with a reason and a status code that distinguishes "nonsense" (400) from "not allowed" (403) from "not in a state where that's possible" (409). |
-| 5 | Collaborators | Done, with a deviation | Works as specified, except that adding and removing collaborators is supervisor-only. The brief's matrix grants it to the assignee too — but it also forbids that agent from reassigning, and collaborator management is a side door to the same outcome. Argued in `decisions.md` 3. |
-| 6 | Finding tickets | Done | Server-side search over subject, description and requester name (trigram-indexed), filters for status/priority/category/assignee/archived/breaching, three sort fields, and pagination with a server-clamped page size. Nothing is filtered in the browser. |
-| 7 | Bulk actions and CSV | Done | Bulk reassign, close, and add/remove collaborator. Every batch returns a per-ticket report of what succeeded and what was refused with the reason — never all-or-nothing. CSV export streams row by row and reuses the queue's exact query builder, so the export and the list can't disagree about what a filter means. |
-| 8 | Dashboard | Done, plus extras | The required headline numbers, status and agent breakdowns, and the 8-week chart. Added beyond the brief: a personal row scoped to the viewer, an unassigned count, and clicking any week to drill into that week's day-by-day breakdown in place. |
-| 9 | History you cannot rewrite | Done | Enforced by a Postgres trigger that raises on any `UPDATE` or `DELETE`, not merely by the absence of a route. The build prompt suggested revoking grants; I checked first and found the app's role *owns* the table, so a revoke would have been a silent no-op. `decisions.md` 13. |
-| 10 | SLA alerts | Done, with a deviation | Alerts list, nav badge, and acknowledgement. Two departures: the list is scoped to assignee-or-collaborator rather than assignee-only, matching who may acknowledge (`decisions.md` 12); and acknowledging is a 60-minute snooze rather than permanent silence, so an acknowledged ticket nobody then fixes comes back rather than disappearing. |
+## Engineering highlights
 
-Not asked for, but built: human-readable ticket keys (`SUP-14`), a supervisor-only view of
-unassigned tickets, per-IP and per-email login throttling, and session-expiry handling that
-signs you out instead of leaving the app rendering its own navigation over a wall of 401s.
+**Server-side authorization on every route.** Supervisors see the full queue; agents see
+only tickets they hold as assignee or collaborator. `authorization.test.ts` is a
+table-driven negative-case test that proves every route refuses the disallowed actor with
+the correct status code. During review, this surfaced a fail-open bug: Prisma silently
+drops `undefined` filter values, which turned a collaborator lookup into "any
+collaborator." The fix is a fail-closed guard — the helper rejects when it doesn't know
+who is asking.
 
-## How much time did you actually spend?
+**Immutability enforced by a database trigger, not a revoke.** The build prompt suggested
+revoking `UPDATE`/`DELETE` grants on `ticket_events`. I checked first: the application's
+role *owns* the table, and a Postgres owner's privileges are inherent — `REVOKE` would
+have been a silent no-op. A `BEFORE UPDATE OR DELETE` trigger fires regardless of
+privilege level. (`docs/decisions.md` 13)
 
-Roughly 15–18 hours across five days (1–5 September), in about nine sessions. That's over the
-12-hour guide, and the overrun is concentrated in two places rather than spread evenly.
+**A pure, table-driven state machine.** Legal transitions are a whitelist; everything else
+is rejected with a specific reason and an appropriate status code (400/403/409). The same
+function that enforces transitions also computes `allowed_transitions` for the UI, so the
+client never holds its own copy of the rules. (`docs/decisions.md` 7)
 
-The first is deployment. Getting three free tiers to agree took far longer than building
-against localhost: a build that failed because setting `NODE_ENV=production` made Render skip
-the devDependencies needed to compile TypeScript, a client that 404'd every route on refresh
-until Vercel was told to serve `index.html`, and the third-party cookie problem that only
-appeared on a phone. None of that is visible in the feature list.
+**Concurrency guards on state changes.** Status updates use conditional writes
+(`updateMany` with the expected state in the `WHERE` clause) inside transactions, so a
+racing request matches zero rows rather than applying a change the state machine already
+ruled out. This matters because `ticket_events` rows are append-only — a duplicate
+history entry cannot be cleaned up afterwards.
 
-The second is that I rebuilt the UI once, in the last session, after the first pass turned out
-to be functional but unpleasant to actually use.
+**Deployment debugging: the iOS cookie problem.** Desktop Chrome accepted the cross-domain
+session cookie. iOS Safari discarded it outright — the cookie was third-party. The server
+was already correct (`Secure`, `SameSite=None`, credentialed CORS). The fix was to proxy
+`/api/*` through the client's own origin so the cookie is first-party. This bug is
+invisible to the test suite by construction: Supertest drives Express in-process with no
+browser and no cookie jar. (`docs/decisions.md` 15)
 
-## What would you do next, with another 12 hours?
+**Seed data driven through the real API.** The seed script creates 50 demo tickets by
+calling the actual endpoints in-process (via Supertest), not by writing rows directly.
+Every seeded ticket is provably reachable by a real user — no hand-written state machine
+in the seed script that could drift. (`docs/decisions.md` 14)
 
-Move SLA breach evaluation out of Node and into SQL.
+## Goal completion
 
-Right now `computeSla()` runs in application code over rows that Postgres has already returned.
-It's correct and it's well-tested, but the database has no idea what "breaching" means — so
-filtering the queue to breaching tickets reads the entire in-progress set and discards most of
-it, and the dashboard's breaching count does the same. At sixty tickets that's free. It stops
-being free well before it stops being correct.
+All 10 goals are complete. Two documented deviations from the brief's authorization
+matrix, both argued in `docs/decisions.md`:
 
-The fix is a stored `breach_at` timestamp on the ticket row, maintained by the same function
-that computes the clock today, and indexed. That turns "everything breaching" into a `WHERE
-breach_at < now()` over an index instead of a full scan plus a filter in Node, and it makes
-things that are currently impossible merely straightforward: alerting on what will breach in
-the next hour, SLA-based routing, automatic escalation.
+| # | Goal | Status | Deviation |
+|---|------|--------|-----------|
+| 1 | Accounts and roles | Done | — |
+| 2 | Tickets (CRUD, archive/restore) | Done | — |
+| 3 | Replies | Done | — |
+| 4 | Ticket lifecycle (state machine, SLA clock) | Done | — |
+| 5 | Collaborators | Done | Supervisor-only (decision 3) |
+| 6 | Search, filter, sort, pagination | Done | — |
+| 7 | Bulk actions and CSV export | Done | — |
+| 8 | Dashboard | Done | Added: personal row, week drill-down |
+| 9 | Immutable history | Done | Trigger, not REVOKE (decision 13) |
+| 10 | SLA alerts | Done | Scoped to assignee+collaborator (decision 12) |
 
-The schema already anticipated this — `clock_started_at` exists as a column precisely so the
-clock could one day be expressed in SQL rather than replayed from the event history
-(`decisions.md` 6). So this is a retrofit along a seam that's already there, not a rewrite.
+Built beyond the ten goals: human-readable ticket keys (`SUP-14`), an unassigned-tickets
+view (supervisor-only, with live badge), per-IP and per-email login throttling, and
+session-expiry handling.
 
-After that, in order: ship the duplicate blocking that `decisions.md` 9 committed to and never
-delivered, and collapse the acknowledgement model from three columns to two.
+## Security model
 
-## What are you least happy with in this codebase, and why?
+- **Authentication:** JWT in an `httpOnly` cookie. The token proves identity; the user's
+  role is re-read from the database on every request, so a role change takes effect
+  immediately.
+- **Authorization:** Three middleware layers — `authenticate` (is the token valid?),
+  `requireRole` (is this user a supervisor?), `requireTicketAccess` (is this their
+  ticket?). Each returns a distinct status code (401/403).
+- **CSRF:** A separate middleware rejects state-changing requests whose `Origin` header
+  names a different domain. CORS alone doesn't cover this — a cross-site form POST is a
+  simple request with no preflight.
+- **Immutability:** `ticket_events` is append-only via database trigger.
+- **Headers:** `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, HSTS in
+  production. `x-powered-by` is disabled.
 
-The SLA clock living in Node.
+## Testing
 
-It is the most important computation in the system — it decides what's breaching, what's
-warning, what alerts, and what the dashboard reports — and it is the one piece Postgres cannot
-see. Everything downstream is shaped around that. The queue's breaching filter can't be a
-`WHERE` clause, so it reads the whole scoped set and filters afterwards. The dashboard's
-breaching count can't be an aggregate, so it fetches every in-progress ticket and counts in
-JavaScript. The alerts list does the same work a third time.
+- **~350 server tests** (Vitest + Supertest) against a real Postgres database — no mocks.
+  Tests exercise transactions, constraints, and the state machine through HTTP.
+- **~90 client tests** (Vitest + Testing Library) — smoke tests for rendering and
+  interaction.
+- **Negative-case testing:** `authorization.test.ts` and `hardening.test.ts` prove every
+  route refuses unauthorized access. The state machine tests cover every illegal
+  transition.
+- **Concurrency tests:** `concurrency.test.ts` verifies racing status changes resolve
+  correctly.
+- **Immutability tests:** `eventsImmutable.test.ts` confirms the trigger blocks UPDATE and
+  DELETE.
 
-What bothers me isn't the performance — at this size it's irrelevant, and I'd make the same
-call again under a 12-hour budget, because getting the pause-and-reopen arithmetic right in one
-readable, unit-testable function was worth more than making it queryable. What bothers me is
-that a limitation propagated into the shape of three separate features before I noticed it had
-become architectural. `findInProgressTickets()` exists as a shared helper specifically because
-three call sites all needed the same workaround. That helper is a reasonable response to the
-problem, but its existence is the tell: I was routing around the design rather than fixing it.
+## Known limitations and what's next
 
-The honest version is that I saw it early — it's written down in `schema.md` under "what breaks
-first at 100× the data," in the same session the clock was built — and chose to keep going.
-That was the right call for the deadline and the wrong one for the codebase.
+The SLA clock lives in Node, not SQL. `computeSla()` runs in application code, so
+the database cannot filter or aggregate by breach status — the queue's breaching filter
+reads the entire in-progress set and filters afterwards. At 60 tickets this is free; at
+6,000 it is a full scan. The fix is a stored `breach_at` timestamp, indexed, which turns
+the filter into `WHERE breach_at < now()`. The schema already has `clock_started_at` as
+the seam for this migration.
+
+This is the limitation I would fix first. It propagated into three features (queue filter,
+dashboard count, alerts list) before I recognized it as architectural, and I had the
+`findInProgressTickets()` helper built to work around it — a reasonable response whose
+existence is the tell that I was routing around the design rather than fixing it. Under a
+12-hour budget, that was the right call for the deadline and the wrong one for the
+codebase.
+
+After that: ship the duplicate blocking that `decisions.md` 9 committed to, and collapse
+the acknowledgement model from three columns to two.
+
+## How to run
+
+See `README.md` for full setup instructions, environment variables, and project structure.
+
+## Time spent
+
+~15–18 hours across five days (1–5 September). The overrun against the 12-hour guide is
+concentrated in deployment (four failures, none reproducible locally, culminating in the
+iOS cookie problem) and a UI rebuild in the final session.
+
+## Where the reasoning is
+
+- `docs/decisions.md` — 15 decisions, each with what was rejected and why
+- `docs/architecture.md` — the moving pieces, one request traced end to end
+- `docs/schema.md` — every table, every constraint, what breaks first at scale
+- `docs/plan.md` — how the work split across sessions, estimates versus reality
+- `docs/ai-prompts.md` — AI-assisted development log

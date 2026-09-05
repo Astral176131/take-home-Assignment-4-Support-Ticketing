@@ -298,8 +298,6 @@ reconstructed afterwards. Each one had a real alternative.
 
 ---
 
----
-
 ## 15. The API is proxied through the client's own origin, so the session cookie is first-party
 
 The client is hosted on Vercel and the API on Render, which are different registrable
