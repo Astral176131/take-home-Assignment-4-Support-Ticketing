@@ -18,11 +18,16 @@ export class ApiError extends Error {
   }
 }
 
+// Empty in dev, where Vite's proxy forwards /api to the local server on the same
+// origin. Set in production, where the client (Vercel) and API (Render) are on
+// different domains, so the request needs an absolute URL to reach the API at all.
+const API_URL = import.meta.env.VITE_API_URL ?? '';
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
   if (init.body) headers['Content-Type'] = 'application/json';
 
-  const res = await fetch(path, { credentials: 'include', ...init, headers });
+  const res = await fetch(`${API_URL}${path}`, { credentials: 'include', ...init, headers });
 
   if (!res.ok) {
     let message = res.statusText || 'Request failed';
