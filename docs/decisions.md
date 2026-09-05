@@ -298,6 +298,40 @@ reconstructed afterwards. Each one had a real alternative.
 
 ---
 
+## 15. The API is proxied through the client's own origin, so the session cookie is first-party
+
+The client is hosted on Vercel and the API on Render, which are different registrable
+domains. That made the session cookie third-party. The server was already doing everything
+correctly for that case - `Secure`, `SameSite=None`, `Access-Control-Allow-Credentials`,
+and an exact-origin `Access-Control-Allow-Origin` - and it worked in desktop Chrome.
+
+It did not work on a phone. iOS Safari blocks third-party cookies outright, and every
+browser on iOS is Safari underneath, so the login response's `Set-Cookie` was discarded and
+the next request arrived with no session. The user saw the API's own "Authentication
+required" and could not get past the login screen. Nothing in the response was wrong; the
+browser simply refused to keep the cookie.
+
+Rather than abandon the httpOnly cookie for a token in `localStorage` - which trades a
+cookie a script cannot read for one it can, to fix a hosting problem rather than a design
+one - `client/vercel.json` rewrites `/api/*` to the Render service. The browser then makes
+a same-origin request, the cookie comes back through the Vercel domain and is first-party,
+and every browser keeps it. `VITE_API_URL` is left unset in production so the client builds
+relative `/api` paths.
+
+Two things this depends on, both verified against the deployed services:
+
+- The `/api/*` rewrite must be listed before the SPA catch-all. Vercel takes the first
+  match, and `/(.*)` would otherwise swallow API calls and serve them `index.html`.
+- The CSRF origin check still passes. A same-origin POST still carries an `Origin` header,
+  Vercel forwards it, and it equals `CLIENT_URL`. If a proxy ever stopped forwarding it,
+  the check treats a missing `Origin` as "not a browser" and allows it, so this fails safe
+  either way.
+
+The cost: the first request after the free-tier Render service idles now waits on a cold
+start from behind Vercel's proxy, which has its own response timeout. Previously that
+latency was the browser's problem and it simply waited. This is a free-tier trade, not a
+property of the approach.
+
 ## Bugs these decisions surfaced
 
 Worth recording, because each one was found by a test rather than in production:
