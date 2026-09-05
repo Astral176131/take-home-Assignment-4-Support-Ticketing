@@ -409,6 +409,42 @@ describe('Ticket routes', () => {
     });
   });
 
+  describe('GET /api/tickets/unassigned', () => {
+    it('lists a ticket nobody has picked up, and excludes one that has an assignee', async () => {
+      // A supervisor never becomes the assignee at creation (decision 1), so leaving
+      // assignee_id out here is the one way to get a genuinely unassigned ticket.
+      const unassigned = await createTicket(supervisorCookie);
+      const assigned = await createTicket(agentACookie, { assignee_id: agentAId });
+
+      // page_size=100 for the same reason as the queue's own test above: this file's
+      // fixtures accumulate across tests, and the default page size would otherwise
+      // make total and items.length diverge as the file grows.
+      const res = await request
+        .get('/api/tickets/unassigned?page_size=100')
+        .set('Cookie', supervisorCookie);
+      const ids = res.body.items.map((t: { id: string }) => t.id);
+
+      expect(res.status).toBe(200);
+      expect(ids).toContain(unassigned.body.id);
+      expect(ids).not.toContain(assigned.body.id);
+      expect(res.body.total).toBe(res.body.items.length);
+    });
+
+    it('supports the same filters as the queue', async () => {
+      const unassigned = await createTicket(supervisorCookie, {
+        subject: 'A very particular unassigned subject line',
+      });
+
+      const res = await request
+        .get('/api/tickets/unassigned?q=very%20particular%20unassigned')
+        .set('Cookie', supervisorCookie);
+      const ids = res.body.items.map((t: { id: string }) => t.id);
+
+      expect(res.status).toBe(200);
+      expect(ids).toContain(unassigned.body.id);
+    });
+  });
+
   describe('GET /api/tickets/:id', () => {
     it('is readable by the assignee, a collaborator and a supervisor', async () => {
       const created = await createTicket(supervisorCookie, {

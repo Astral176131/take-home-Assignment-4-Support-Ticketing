@@ -1352,6 +1352,40 @@ textarea {
   max-width: 100%;
 }
 
+/* Wraps a bar's whole column when clicking it drills into that week — reset to
+   plain layout rather than button chrome, so a clickable bar looks identical to
+   a non-clickable one except for the hover/focus affordance below. */
+.week-chart-col-button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+
+.week-chart-col-button:hover .week-chart-bar,
+.week-chart-col-button:focus-visible .week-chart-bar {
+  background: var(--signal-text);
+}
+
+.week-chart-col-button:focus-visible {
+  outline: 2px solid var(--signal-text);
+  outline-offset: 2px;
+}
+
+.dashboard-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
 /* ===== Ticket detail ===== */
 .ticket-layout {
   display: grid;

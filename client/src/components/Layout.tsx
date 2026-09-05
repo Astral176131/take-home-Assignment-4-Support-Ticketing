@@ -2,12 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useAlerts } from '../context/AlertsContext';
+import { useUnassigned } from '../context/UnassignedContext';
 
 const NAV = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/tickets', label: 'Tickets', end: false },
   { to: '/my-tickets', label: 'My tickets', end: false },
   { to: '/alerts', label: 'Alerts', end: false },
+  // Routing an unassigned ticket to an agent is a supervisor action throughout this
+  // system (decision 1) — an agent has no use for a list they cannot act on.
+  { to: '/unassigned', label: 'Unassigned', end: false, supervisorOnly: true },
 ];
 
 const ROLE_LABELS: Record<string, string> = {
@@ -39,6 +43,9 @@ export function Layout() {
   // Shared with the alerts page, so acknowledging one there updates this badge in the
   // same render rather than on the next poll. The count is not this component's to own.
   const { total: alertCount } = useAlerts();
+  const { total: unassignedCount } = useUnassigned();
+
+  const visibleNav = NAV.filter((item) => !item.supervisorOnly || user?.role === 'supervisor');
 
   const [navOpen, setNavOpen] = useState(false);
   const drawerRef = useRef<HTMLElement>(null);
@@ -160,7 +167,7 @@ export function Layout() {
         </div>
 
         <div className="sidebar-nav">
-          {NAV.map((item) => (
+          {visibleNav.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -173,6 +180,12 @@ export function Layout() {
                 <span className="nav-badge">
                   {alertCount}
                   <span className="sr-only"> alerts need attention</span>
+                </span>
+              )}
+              {item.label === 'Unassigned' && unassignedCount > 0 && (
+                <span className="nav-badge">
+                  {unassignedCount}
+                  <span className="sr-only"> tickets waiting to be assigned</span>
                 </span>
               )}
             </NavLink>
@@ -203,6 +216,13 @@ export function Layout() {
         <span aria-live="polite" className="sr-only">
           {alertCount > 0 ? `${alertCount} alerts need attention` : 'No alerts need attention'}
         </span>
+        {user?.role === 'supervisor' && (
+          <span aria-live="polite" className="sr-only">
+            {unassignedCount > 0
+              ? `${unassignedCount} tickets waiting to be assigned`
+              : 'No tickets waiting to be assigned'}
+          </span>
+        )}
         <Outlet />
       </main>
     </div>

@@ -239,3 +239,104 @@ describe('GET /api/dashboard', () => {
     expect(agentCount(after, agentAId) - agentCount(before, agentAId)).toBe(0);
   });
 });
+
+describe('GET /api/dashboard/week', () => {
+  // Independent of the describe block above: that one's afterAll deletes its own
+  // supervisor and agent once its tests finish, so a cookie or id borrowed from it would
+  // belong to a since-deleted user by the time these tests run.
+  const WEEK_SUPERVISOR_EMAIL = 'dashboard-week-test-sup@example.com';
+  const WEEK_AGENT_EMAIL = 'dashboard-week-test-agent@example.com';
+  const WEEK_REQUESTER_EMAIL = 'dashboard-week-test-customer@example.com';
+
+  let weekSupervisorCookie: string;
+  let weekAgentId: string;
+
+  function createWeekTicket(overrides: Record<string, unknown> = {}) {
+    return request
+      .post('/api/tickets')
+      .set('Cookie', weekSupervisorCookie)
+      .send({
+        subject: 'Dashboard week-detail test ticket',
+        description: 'Created for the week drill-down tests.',
+        requester: { name: 'Dashboard Week Customer', email: WEEK_REQUESTER_EMAIL },
+        priority_code: 'normal',
+        category: 'bug',
+        assignee_id: weekAgentId,
+        ...overrides,
+      });
+  }
+
+  beforeAll(async () => {
+    await upsertUser(WEEK_SUPERVISOR_EMAIL, 'Dashboard Week Supervisor', 'supervisor');
+    weekAgentId = await upsertUser(WEEK_AGENT_EMAIL, 'Dashboard Week Agent', 'agent');
+    weekSupervisorCookie = await login(WEEK_SUPERVISOR_EMAIL);
+  });
+
+  afterAll(async () => {
+    const tickets = await testPrisma.ticket.findMany({
+      where: { requester: { email: WEEK_REQUESTER_EMAIL } },
+      select: { id: true },
+    });
+    const ids = tickets.map((t) => t.id);
+
+    await purgeTicketEvents(testPrisma, { ticketId: { in: ids } });
+    await testPrisma.reply.deleteMany({ where: { ticketId: { in: ids } } });
+    await testPrisma.ticketCollaborator.deleteMany({ where: { ticketId: { in: ids } } });
+    await testPrisma.ticket.deleteMany({ where: { id: { in: ids } } });
+    await testPrisma.requester.deleteMany({ where: { email: WEEK_REQUESTER_EMAIL } });
+    await testPrisma.user.deleteMany({ where: { email: { startsWith: 'dashboard-week-test-' } } });
+  });
+
+  it('rejects an unauthenticated request', async () => {
+    const res = await request.get('/api/dashboard/week?start=2026-01-05');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a start that does not parse as a date', async () => {
+    const res = await request.get('/api/dashboard/week?start=not-a-date').set('Cookie', weekSupervisorCookie);
+    expect(res.status).toBe(400);
+  });
+
+  it("floors an arbitrary day within the week to that week's Monday", async () => {
+    const twoWeeksAgo = new Date();
+    twoWeeksAgo.setUTCDate(twoWeeksAgo.getUTCDate() - 14);
+    const weekStart = startOfWeekUtc(twoWeeksAgo);
+    const thursday = new Date(weekStart.getTime() + 3 * 24 * 60 * 60_000);
+
+    const res = await request
+      .get(`/api/dashboard/week?start=${isoDate(thursday)}`)
+      .set('Cookie', weekSupervisorCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.week_start).toBe(isoDate(weekStart));
+    expect(res.body.days).toHaveLength(7);
+    expect(res.body.days[0].date).toBe(isoDate(weekStart));
+  });
+
+  it('buckets a resolution on the day it happened, and credits the agent who holds it', async () => {
+    // A week nothing else in this file touches (the other describe block's tests use
+    // "this week" or "three weeks ago"), so every count read back here is this test's own.
+    const twoWeeksAgo = new Date();
+    twoWeeksAgo.setUTCDate(twoWeeksAgo.getUTCDate() - 14);
+    const weekStart = startOfWeekUtc(twoWeeksAgo);
+    const wednesday = new Date(weekStart.getTime() + 2 * 24 * 60 * 60_000);
+
+    const ticket = await createWeekTicket();
+    await request.post(`/api/tickets/${ticket.body.id}/status`).set('Cookie', weekSupervisorCookie).send({ status: 'open' });
+    await request.post(`/api/tickets/${ticket.body.id}/status`).set('Cookie', weekSupervisorCookie).send({ status: 'resolved' });
+    await testPrisma.ticket.update({ where: { id: ticket.body.id }, data: { resolvedAt: wednesday } });
+
+    const res = await request
+      .get(`/api/dashboard/week?start=${isoDate(weekStart)}`)
+      .set('Cookie', weekSupervisorCookie);
+
+    expect(res.status).toBe(200);
+    const totalForWeek = res.body.days.reduce((sum: number, d: { count: number }) => sum + d.count, 0);
+    expect(totalForWeek).toBe(1);
+    const wednesdayRow = res.body.days.find((d: { date: string }) => d.date === isoDate(wednesday));
+    expect(wednesdayRow.count).toBe(1);
+
+    const agentRow = res.body.by_agent.find((r: { agent: { id: string } }) => r.agent.id === weekAgentId);
+    expect(agentRow.count).toBe(1);
+  });
+});

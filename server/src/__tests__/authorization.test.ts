@@ -122,6 +122,14 @@ const CASES: RouteCase[] = [
     denied: { anonymous: 401 },
   },
   {
+    route: 'GET /api/tickets/unassigned',
+    method: 'get',
+    path: () => '/api/tickets/unassigned',
+    // Routing an unassigned ticket is a supervisor action (decision 1), so no agent —
+    // whatever their relationship to any given ticket — has a use for this list.
+    denied: { anonymous: 401, outsider: 403, assignee: 403, collaborator: 403 },
+  },
+  {
     route: 'GET /api/tickets/duplicate-check',
     method: 'get',
     path: () => `/api/tickets/duplicate-check?email=${REQUESTER_EMAIL}`,
@@ -323,6 +331,7 @@ describe('Authorization: the disallowed actor is refused on every route', () => 
     expect((await request.get(`/api/tickets/${ticketId}`).set('Cookie', cookies.collaborator)).status).toBe(200);
     expect((await request.get(`/api/tickets/${ticketId}`).set('Cookie', cookies.supervisor)).status).toBe(200);
     expect((await request.get('/api/agents').set('Cookie', cookies.supervisor)).status).toBe(200);
+    expect((await request.get('/api/tickets/unassigned').set('Cookie', cookies.supervisor)).status).toBe(200);
     expect(
       (await request
         .post(`/api/tickets/${resolvedTicketId}/status`)

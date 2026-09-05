@@ -23,9 +23,17 @@ export interface Dashboard {
   pending_count: number;
   resolved_this_week: number;
   breaching_count: number;
+  unassigned_count: number;
   by_status: Record<TicketStatus, number>;
   by_agent: { agent: Person; count: number }[];
   resolved_per_week: { week_start: string; count: number }[];
+}
+
+/** GET /api/dashboard/week — one week's resolutions, day by day and by agent. */
+export interface WeekDetail {
+  week_start: string;
+  days: { date: string; count: number }[];
+  by_agent: { agent: Person; count: number }[];
 }
 
 export interface User {

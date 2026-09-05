@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Layout } from '../Layout';
 import { AlertsProvider } from '../../context/AlertsContext';
+import { UnassignedProvider } from '../../context/UnassignedContext';
 
 const get = vi.fn();
 
@@ -20,7 +21,9 @@ function renderLayout() {
   return render(
     <MemoryRouter>
       <AlertsProvider>
-        <Layout />
+        <UnassignedProvider>
+          <Layout />
+        </UnassignedProvider>
       </AlertsProvider>
     </MemoryRouter>
   );

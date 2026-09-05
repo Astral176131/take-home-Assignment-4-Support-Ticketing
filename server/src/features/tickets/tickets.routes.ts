@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { Category, Prisma, Priority } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
-import { authenticate, requireTicketAccess } from '../../middleware/auth.js';
+import { authenticate, requireRole, requireTicketAccess } from '../../middleware/auth.js';
 import { writeEvent } from './events.js';
 import { STATUS_TO_API, ticketPayload } from './detail.js';
 import { computeSla } from './sla.js';
@@ -350,6 +350,37 @@ router.get('/mine', async (req: Request, res: Response): Promise<void> => {
   };
 
   res.json(await pagedTickets(mine, orderBy.value, req.query));
+});
+
+/**
+ * GET /api/tickets/unassigned — every ticket nobody has picked up yet.
+ *
+ * Supervisor-only: routing an unassigned ticket to an agent is a supervisor action
+ * throughout this system (decision 1), and an agent has nothing to do with a ticket
+ * until they are its assignee or a collaborator, so there is no agent-scoped version of
+ * this list the way there is for /mine.
+ *
+ * Same filters, sort and paging as the queue, ANDed with "has no assignee" — every
+ * ticket here is necessarily still `new_ticket`, since opening one requires an assignee.
+ */
+router.get('/unassigned', requireRole('supervisor'), async (req: Request, res: Response): Promise<void> => {
+  const actor = req.user!;
+
+  const where = buildTicketWhere(actor, req.query);
+  if (!where.ok) {
+    res.status(400).json({ error: where.error });
+    return;
+  }
+
+  const orderBy = resolveTicketSort(req.query);
+  if (!orderBy.ok) {
+    res.status(400).json({ error: orderBy.error });
+    return;
+  }
+
+  const unassigned: Prisma.TicketWhereInput = { AND: [where.value, { assigneeId: null }] };
+
+  res.json(await pagedTickets(unassigned, orderBy.value, req.query));
 });
 
 // --- Read one ----------------------------------------------------------------

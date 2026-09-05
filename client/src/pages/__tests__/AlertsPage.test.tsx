@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { AlertsPage } from '../AlertsPage';
 import { Layout } from '../../components/Layout';
 import { AlertsProvider } from '../../context/AlertsContext';
+import { UnassignedProvider } from '../../context/UnassignedContext';
 import type { Role, TicketListItem } from '../../types';
 
 // No beforeEach reset — see DashboardPage.test.tsx for why a hook here misreports a
@@ -67,8 +68,10 @@ function renderWithNav() {
   return render(
     <MemoryRouter>
       <AlertsProvider>
-        <Layout />
-        <AlertsPage />
+        <UnassignedProvider>
+          <Layout />
+          <AlertsPage />
+        </UnassignedProvider>
       </AlertsProvider>
     </MemoryRouter>
   );
