@@ -1164,7 +1164,7 @@ textarea {
 
 @media (min-width: 700px) {
   .stat-strip {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
   }
 
   .stat-item {

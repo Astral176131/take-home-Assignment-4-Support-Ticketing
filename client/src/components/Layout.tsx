@@ -8,10 +8,10 @@ const NAV = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/tickets', label: 'Tickets', end: false },
   { to: '/my-tickets', label: 'My tickets', end: false },
-  { to: '/alerts', label: 'Alerts', end: false },
   // Routing an unassigned ticket to an agent is a supervisor action throughout this
   // system (decision 1) — an agent has no use for a list they cannot act on.
   { to: '/unassigned', label: 'Unassigned', end: false, supervisorOnly: true },
+  { to: '/alerts', label: 'Alerts', end: false },
 ];
 
 const ROLE_LABELS: Record<string, string> = {
