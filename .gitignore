@@ -11,3 +11,6 @@ venv/
 .env.*.local
 *.log
 .DS_Store
+
+# Local build prompt, not part of the submission
+claude-code-build-prompt.md

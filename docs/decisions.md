@@ -298,6 +298,8 @@ reconstructed afterwards. Each one had a real alternative.
 
 ---
 
+---
+
 ## 15. The API is proxied through the client's own origin, so the session cookie is first-party
 
 The client is hosted on Vercel and the API on Render, which are different registrable
@@ -332,9 +334,12 @@ start from behind Vercel's proxy, which has its own response timeout. Previously
 latency was the browser's problem and it simply waited. This is a free-tier trade, not a
 property of the approach.
 
+---
+
 ## Bugs these decisions surfaced
 
-Worth recording, because each one was found by a test rather than in production:
+Worth recording, because all but the last were found by a test rather than in production —
+and the last one is here precisely because no test in this suite could have found it:
 
 1. **Prisma drops `undefined` filter values** instead of matching nothing. An absent user
    id turned the collaborator lookup in `checkTicketAccess` into "any collaborator" and
@@ -374,3 +379,24 @@ Worth recording, because each one was found by a test rather than in production:
    activity window after creation instead — realistic on its own terms (real support
    activity happens within days of a ticket opening, not spread across its entire age), and
    incidentally what keeps `resolved_at`'s week close to `created_at`'s.
+8. **The app was unusable on a phone, and nothing in the codebase was wrong.** Sign-in
+   appeared to succeed and then every subsequent request came back "Authentication
+   required" — on iOS only, on a deployment desktop Chrome had been happily using for
+   days. The cause was the hosting topology, not the code: the client is served from
+   `vercel.app` and the API from `onrender.com`, which are different registrable domains,
+   so the session cookie was third-party. iOS Safari blocks those outright, and every
+   browser on iOS is Safari underneath, so the `Set-Cookie` was simply discarded. The
+   server was already doing everything correctly for the cross-site case — `Secure`,
+   `SameSite=None`, `Access-Control-Allow-Credentials`, an exact-origin
+   `Access-Control-Allow-Origin` — and none of it mattered.
+
+   The reason this one is in the list is what it says about the test suite. Around 350
+   server tests passed throughout, including every authentication and authorization test,
+   because Supertest drives the Express app in-process: there is no browser, no cookie
+   jar, and therefore no notion of first-party versus third-party at all. The suite was
+   testing the one layer that was working. A whole class of bug — anything that is a
+   property of the deployment topology rather than of the code — is invisible to it by
+   construction, and the only way to find them is to open the deployed thing on a real
+   device. Fixed by decision 15; compounded, until it was separately fixed, by the app
+   having no way to recover from a dead session other than rendering its own navigation
+   over a wall of 401s.

@@ -1,190 +1,192 @@
-# Assignment 04 — Support Ticketing
+# Support Ticketing
 
-## The scenario
+A shared support queue for a small team that currently handles customer requests over email,
+by hand. Agents pick up tickets, reply, and move them through a fixed lifecycle
+(`new → open → pending → resolved → closed`); a supervisor can reassign work, close tickets,
+and see the whole queue. Every ticket carries a response-time target set by its priority, and
+anything at risk of breaching that target shows up as an alert, not something a person has to
+notice by scanning timestamps.
 
-Picture a small software company fielding a growing stream of customer support requests — bug
-reports, billing questions, plain "how do I" questions — that currently arrive by email and get
-handled ad hoc. Whoever notices an email first replies to it, sometimes twice, sometimes not at all.
+## Live deployment
 
-The result is predictable. A customer emails three times about the same issue because nobody can
-tell it is already being worked on by someone else. A ticket sits untouched for two weeks because
-the one person who understood it went on leave and nobody else picked it up. Leadership cannot say
-how many requests are currently open, or which ones are about to breach the response time promised
-to the customer, because answering either question means opening every email and checking a
-timestamp by hand.
+- **App:** https://take-home-assignment-4-support-tick.vercel.app
+- **API:** https://take-home-assignment-4-support-ticketing-f3wf.onrender.com
 
-They want one shared queue: agents pick up tickets, reply, and move them through a clear lifecycle,
-while a supervisor can reassign work and see the whole queue at once. Anyone should be able to tell
-which tickets are at risk of breaching their response commitment without scanning every open ticket
-by hand. Build the shared queue that replaces the group inbox.
+Both run on free tiers. The API spins down after 15 minutes of inactivity — the first request
+after that can take 30–60 seconds to wake it up. That's a hosting limit, not a bug.
 
-## What it must do
+## Tech stack
 
-Everything below is required. Several of the ten spell out exact rules — what happens on an illegal
-move, what a bulk action must report back, when a dismissed alert is allowed to reappear — and those
-specifics are the actual ask, not just the bold headline in front of them.
+| Layer | Choice | Why |
+|---|---|---|
+| Frontend | React 19 + TypeScript, built by Vite | a plain SPA against a JSON API keeps "where does a rule live" unambiguous — never the frontend — and Vite's dev server is fast enough that the feedback loop was never the bottleneck |
+| Routing | React Router 7 | client-side routing for a single-page app; no server-rendering requirement to justify Next.js |
+| Backend | Express 5 + TypeScript | minimal and unopinionated — the state machine and authorization rules are plain functions, not framework decorators or magic |
+| ORM | Prisma 7, via `@prisma/adapter-pg` | typed queries against a schema that changed constantly during development; the driver adapter is Prisma 7's new requirement for a `pg` connection, not a choice |
+| Database | Postgres, hosted on Supabase | relational data with real foreign keys and a unique-constraint-shaped bug (see `docs/decisions.md`, decision 1) that a document store wouldn't have caught the same way |
+| Auth | Hand-rolled email + password, JWT in an `httpOnly` cookie | the whole auth surface is a handful of files; a library like Passport or Auth.js buys machinery for OAuth providers and session stores this project never needed |
+| Password hashing | `bcryptjs` | pure JavaScript — no native build step, which matters on Render's free-tier build environment |
+| Testing | Vitest + Supertest, against a real second Postgres database | the rules worth testing here are transactional and constraint-shaped (a status change and its history row landing together, a unique index rejecting a duplicate); a mocked ORM would only prove the code calls the functions it calls |
+| Hosting | Render (API), Vercel (client), Supabase (database) | three free tiers, deployed in the order the database's connection details are needed by the next piece |
 
-1. **Accounts and roles.** People sign in with an email and password, and there are at least two
-roles — a supervisor role and an agent role. Supervisors can reassign any ticket to any agent, close
-tickets, and see the entire queue. Agents can only act on tickets where they are the primary
-assignee or a collaborator, and cannot reassign a ticket away from themselves. The difference must
-be enforced on the server, not just hidden in the interface.
+## Features
 
-2. **Tickets.** Agents and supervisors create tickets with a subject, a description, a requester, a
-priority and a category, and can edit them later. Tickets can be archived and restored. Archiving
-removes a ticket from every default queue view without destroying its history.
+- Sign in as an agent or a supervisor. Every rule below is enforced server-side — hiding a
+  button in the UI is never the only thing standing between a user and an action they
+  shouldn't be able to take.
+- Create, edit, archive and restore tickets with a subject, description, requester, priority
+  and category.
+- Reply to a ticket, or log a customer's reply on their behalf, marking either as an internal
+  note or a customer-visible message.
+- Move a ticket through its lifecycle. Illegal moves (closing as an agent, reopening past the
+  window, moving to a status that doesn't follow from the current one) are refused with a
+  reason, not silently ignored.
+- Add collaborators to a ticket (supervisor-only) and see one list of every ticket you hold as
+  assignee or collaborator.
+- Search, filter, sort and page through the queue entirely server-side, and export the
+  currently filtered view as a CSV.
+- Select several tickets and bulk-reassign or bulk-close them in one action, with a per-ticket
+  report of what succeeded and what was refused.
+- See a dashboard: headline counts, a personal breakdown of your own tickets, a breakdown by
+  status and by agent, and a chart of tickets resolved per week for the last 8 weeks —
+  click any week to drill into that week's daily breakdown, in place, without leaving the page.
+- See every ticket nobody has picked up yet (supervisor-only) and route it to an agent.
+- Get alerted when a ticket breaches its response target or is about to, with a count badge in
+  the navigation; acknowledge an alert to silence it for an hour, or until the ticket is
+  reopened.
+- Read a full, unchangeable timeline of every status change, reassignment and reply on a
+  ticket — nothing in it can be edited or deleted, including by a supervisor.
 
-3. **Replies inside tickets.** Every reply belongs to exactly one ticket and carries a message body,
-an author, a timestamp, and a flag marking it as an internal note or a customer-visible reply.
-Replies can be added to a ticket at any time. Opening a ticket shows all of its replies in order.
+## Prerequisites
 
-4. **Ticket lifecycle.** A ticket moves through *New → Open → Pending → Resolved → Closed*,
-with its response clock measured against a target response time set by its priority. Pending
-specifically means the ticket is waiting on a reply from the customer, and the clock pauses for as
-long as a ticket sits in Pending rather than continuing to run against the agent; a customer reply
-returns the ticket to Open and resumes the clock. A Closed ticket can only be reopened within a
-fixed window afterward — once that window passes, it stays closed. Any other move must be rejected
-by the server with a message explaining why.
+- **Node.js 22** (developed against `v22.14.0`)
+- **npm 10** (developed against `10.9.2`)
+- A **Postgres database** you can reach — this project used two separate Supabase projects
+  (one for development, one for the test suite). Any reachable Postgres connection string
+  works.
 
-5. **Collaborators.** A ticket has one primary assignee, but any number of other agents can be added
-to it as collaborators who can also reply and update it, and a single agent can collaborate on any
-number of tickets. Every agent can see one list of every ticket where they are the primary assignee
-or a collaborator.
+## Setup
 
-6. **Finding tickets.** One list shows the queue with a text search over subject and description,
-filters for status, priority, category and assignee, sorting by created date, priority or last
-update, and pagination showing the total number of matches. All of this must happen on the server —
-do not load every ticket into the browser and filter there.
+```bash
+# 1. Clone and enter the repo
+git clone https://github.com/Astral176131/take-home-Assignment-4-Support-Ticketing.git
+cd take-home-Assignment-4-Support-Ticketing
 
-7. **Acting on many tickets at once.** Select several tickets from the queue and bulk-reassign them
-to a different agent, or bulk-close them, in one action. Because some tickets in the selection may
-not be eligible for the move, the result must report per ticket what succeeded and what was refused
-and why, not just fail the whole batch. Separately, export the currently filtered queue as a CSV
-file.
+# 2. Install dependencies — client and server are separate npm projects, not a workspace
+cd server && npm install
+cd ../client && npm install
+cd ..
 
-8. **A dashboard.** A landing view shows headline numbers — open tickets, tickets pending on the
-customer, resolved this week, breaching their response time. It also breaks tickets down by status
-and by agent, and charts tickets resolved per week over the last eight weeks.
+# 3. Configure the server's environment
+#    Create server/.env with at least DATABASE_URL and JWT_SECRET (see the table below)
 
-9. **History you cannot rewrite.** Every ticket has a timeline showing every status change with the
-old and new status and who made it, every reassignment, and every reply, internal or
-customer-visible. Nothing in this timeline can be edited or deleted after the fact, including by
-supervisors.
+# 4. Apply migrations
+npm run migrate
 
-10. **SLA alerts.** Any ticket whose response clock has passed its target response time, or is
-within a short window of doing so, appears in an alerts area, with a count badge visible in the
-navigation. An agent can acknowledge an alert for a ticket assigned to them, clearing it from the
-list. If the ticket is later reopened and breaches its target response time again, the alert
-returns.
+# 5. Seed demo data (50 tickets, 6 users, 20 customers)
+npm run seed
 
-## Stretch ideas (optional)
+# 6. Run the app (two terminals)
+npm run dev:server   # API on :3000
+npm run dev:client   # client on :5173, proxies /api to :3000
+```
 
-None of these are required, and none substitute for a goal above. If you finish all ten with time
-left over, pick whichever of these sounds most useful and build it:
+Open `http://localhost:5173` and sign in with one of the seeded accounts (see
+`SUBMISSION.md` for the full list).
 
-- A canned-response library for common replies.
-- A post-resolution customer satisfaction rating.
-- A public status page for ongoing incidents.
-- Free-form tagging of tickets.
-- An internal knowledge base linked from tickets.
-- Automatic routing of new tickets by category.
-- Merging duplicate tickets.
-- SLA policies that vary by priority.
-- An email digest of the daily queue.
+## Environment variables
 
+### `server/.env`
 
----
+| Name | Required | Purpose | Example |
+|---|---|---|---|
+| `DATABASE_URL` | yes | Postgres connection string | `postgresql://user:pass@host:5432/postgres` |
+| `JWT_SECRET` | yes | signs and verifies the session cookie's JWT | a long random string — generate one with `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` |
+| `PORT` | no | port the API listens on | `3000` (default) |
+| `NODE_ENV` | no | `production` switches the cookie to `Secure`/`SameSite=None` and enables HSTS | `development` (default) |
+| `CLIENT_URL` | no in dev, yes in production | the single origin CORS and the CSRF check allow | `http://localhost:5173` (default) |
 
-## What we are assessing
+### `server/.env.test`
 
-A working application is table stakes. Almost every serious candidate will produce something that runs, has a login, and roughly does what was asked. That's the floor, not the differentiator.
+Same shape as `server/.env`, pointed at a **separate** database — the test suite creates and
+deletes rows freely and must never touch development data.
 
-What actually separates submissions is the record of thinking behind the app: the decisions you made and why, the trade-offs you weighed, what you built first and what you deliberately left out, and whether you can explain any part of your own system when asked. We are hiring for judgement. The app is the evidence for that judgement, not the deliverable in itself.
+### `client` (Vercel environment variables, build-time)
 
-We also read the code itself for structure and readability, which counts for a small share of the overall score.
+| Name | Required | Purpose | Example |
+|---|---|---|---|
+| `VITE_API_URL` | no — leave unset | absolute API origin, only needed if the client and API are cross-origin **and** the deployment isn't proxying `/api/*` through the client's own domain (see `docs/decisions.md`, decision 15). This deployment proxies instead, so it's unset. | *(leave empty)* |
 
-## Time budget
+Nothing above is a real value used in this project's own deployment — every credential lives
+in Render's and Vercel's environment variable settings, never in the repository.
 
-Budget about 12 hours total, spent roughly 2 hours a day across a week.
+## Running dev, build, and tests
 
-This is not a race. We are not timing you against other candidates, and submitting early scores nothing extra. Twelve hours is a size guide so you know how much to attempt — pace yourself, stop when you're tired, and spend some of that time thinking and documenting, not only typing code.
+```bash
+# Dev servers (from the repo root)
+npm run dev:server
+npm run dev:client
 
-## Pick any stack you like
+# Production build
+cd server && npm run build   # tsc -> dist/
+cd client && npm run build   # tsc -b && vite build -> dist/
 
-Use any language, any framework, any UI library, any ORM, and any database access approach you want. We have no house stack, and no stack scores better than another — this round is not a test of whether you know particular tools.
+# Tests — both require their respective .env.test / .env to point at a real reachable
+# Postgres database; nothing is mocked
+cd server && npm test        # Vitest + Supertest, ~350 tests
+cd client && npm test        # Vitest + Testing Library, ~90 tests
+```
 
-Use whatever you are fastest and most confident in. Time spent learning something new to impress us is time not spent on the ten goals above, and it will show.
+## Project structure
 
-## Using AI is allowed and encouraged
+```
+server/
+  prisma/
+    schema.prisma            data model (see docs/schema.md)
+    migrations/               8 migrations, applied in order
+    seed.ts                   drives 50 demo tickets through the real API, not direct writes
+  src/
+    app.ts                    Express wiring: CORS, CSRF check, routers, error handler
+    index.ts                  starts the server
+    lib/                      Prisma client, JWT helpers, shared config
+    middleware/auth.ts        authenticate, requireRole, requireTicketAccess
+    features/
+      auth/                   login, logout, session probe, login-attempt throttling
+      tickets/                CRUD, replies, status, collaborators, reassignment, bulk
+                               actions, CSV export, the state machine, SLA math
+      agents/                 the agent roster a supervisor assigns from
+      alerts/                 the SLA alerts list
+      dashboard/               headline numbers, personal stats, the 8-week/daily charts
 
-Use AI tools however you want — to scaffold code, debug a stuck problem, write tests, draft documentation, or anything else that helps you move faster. A few things to know about how we treat it:
+client/
+  src/
+    lib/api.ts                the one place that calls the server
+    lib/useTicketQuery.ts     shared filter/sort/paging state, held in the URL
+    context/                  auth session, live alert count, live unassigned count
+    components/               shared building blocks (queue table, filters, badges, charts)
+    pages/                    one file per route — Dashboard, Queue, Ticket detail,
+                               My tickets, Unassigned, Alerts, New ticket, Login
 
-- We do not penalise AI use, and we make no attempt to detect it.
-- We care about whether you understood, directed and verified the output — not about who or what produced the first draft of it.
-- `docs/ai-prompts.md` must contain the prompts you actually used, including the ones that produced bad output and what you changed afterwards. If you used no AI at all, say so here and describe how you worked instead — that is assessed the same way.
-- Submitting generated code you cannot explain is the single most common way candidates fail this round.
+docs/
+  architecture.md             the moving pieces, request flow, what wasn't built
+  schema.md                   every table, every constraint, what breaks first at scale
+  decisions.md                 15 recorded decisions, what was rejected and why
+  plan.md                     how the work was actually split and estimated
+  ai-prompts.md                the prompts used, including the ones that went wrong
+```
 
-You are accountable for everything in your submission. If a reviewer points at a piece of code and asks why it's there, or why it works the way it does, "the AI wrote it" is not an answer.
+## Known limitations and what's next
 
-## Use git properly
-
-Publish to a public GitHub repository, and commit incrementally as the work actually happens — after each meaningful step, not in one pass at the end.
-
-A repository whose entire history is a single "initial commit" containing a finished app scores zero on git history, and it colours how we read everything else in your submission, however good the app itself is. Your history is how we see the order you built in, where you got stuck, and how the design changed along the way. If it isn't there, we can't assess it, and we won't assume the best.
-
-## What you must commit
-
-Alongside your code, commit these five files under `docs/`. Your zip includes a stub for each with the questions it needs to answer — fill them in as you go, not from memory at the end.
-
-| File | What it must answer |
-|------|----------------------|
-| `docs/architecture.md` | What the moving pieces are, how they talk to each other, where each one runs, the request path for one representative user action end to end, and what you decided not to build. |
-| `docs/schema.md` | Every table's columns and types, which relationships are one-to-many versus many-to-many, which constraints live in the database versus the application, what you deliberately denormalised, and what would break first at 100x the data. |
-| `docs/plan.md` | How you split the work into sessions, what order you built in and why, what you estimated versus what it actually took, and what you cut when you ran short. |
-| `docs/decisions.md` | At least five real decisions — what you chose, what you rejected, and why — including at least one you later reversed. |
-| `docs/ai-prompts.md` | The prompts you actually used, in order, grouped by what you were trying to do, including at least one that produced something wrong and what you did about it. |
-
-## Host it for free
-
-Deploy the whole thing somewhere reachable by URL, using free tiers only.
-
-One combination that works, if you would rather not decide:
-
-- **Database** — a managed service such as Supabase.
-- **Server-side code** — Render.
-- **Browser-side code** — Vercel.
-
-Deploy in that order: create the database first, give the server its connection details as environment variables, then point the browser-side part at the server's public URL.
-
-This is one option, not a requirement. Any free host is equally acceptable — everything on a single provider, one virtual machine, a container platform, a static host with serverless functions. The choice earns and loses nothing.
-
-Requirements:
-
-- A working live URL.
-- Seeded with enough demo data to show the system doing something, not an empty shell.
-- Demo credentials for every role recorded in `SUBMISSION.md`.
-- Connection strings, keys and passwords kept in environment variables, never in the repository.
-- Free tiers often sleep when idle and can take a minute or more to wake. Note it in `SUBMISSION.md` if yours does, so a slow first load is not read as a broken deployment.
-- If you cannot get it hosted, submit anyway and record in `SUBMISSION.md` what you tried and where it broke.
-
-## How to submit
-
-Send us:
-
-- The URL of your public GitHub repository.
-- The URL of your live, deployed application.
-- Your completed `SUBMISSION.md`, committed to the repository.
-
-That's the whole submission. Nothing else to prepare, no separate form.
-
-## What happens next
-
-If your submission clears the bar, we'll set up a short call. We will ask about specific decisions we can see in your repository and its history — why you modelled something a particular way, what a certain commit was fixing, what you'd change if you kept going.
-
-We're telling you this now because it should change how carefully you document as you go. Write `docs/decisions.md` for a version of yourself who has to explain it three weeks from now.
-
-## Scope
-
-The 10 goals stated in this brief are the cutoff. Meet all 10, solidly, and you have a complete submission.
-
-Stretch ideas are optional. They exist for candidates who finish the 10 with time left and want to keep building — they are never required, and they do not make up for a goal you didn't hit. Doing 8 goals well beats doing 10 goals badly. If time is short, finish fewer goals properly rather than leaving all ten half-done.
+- **The queue list has no upper bound on result size beyond page size** — at this project's
+  scale (dozens of tickets) that's invisible; at 100x the data it's the first thing to fix
+  (see `docs/schema.md`).
+- **SLA breach status is computed in Node, not SQL** — correct, but means "show me only
+  breaching tickets" reads the whole in-progress set before filtering. Fine at this scale.
+- **No email ingestion** — tickets are logged by hand from an inbox; there's no webhook or IMAP
+  polling turning an incoming email into a ticket automatically.
+- **Duplicate tickets are warned about, not blocked** — seeing a customer's existing open
+  tickets on the create form is as far as it goes; filing a genuine duplicate is still
+  possible. See `docs/decisions.md`, decision 9, for the reasoning and what would change it.
+- **Free-tier cold starts** — the first request to the API after 15 minutes of inactivity is
+  slow. A paid tier or a keep-alive ping would fix it; neither seemed worth it for a graded
+  demo.
